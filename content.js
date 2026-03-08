@@ -13,8 +13,16 @@
   const tabsModule = globalScope.BraveSidebarTabs;
   const sidebarDataModule = globalScope.BraveSidebarData;
   const dragStateModule = globalScope.BraveSidebarDragState;
+  const keyboardNavModule = globalScope.BraveSidebarKeyboardNav;
 
-  if (!searchModule || !groupsModule || !tabsModule || !sidebarDataModule || !dragStateModule) {
+  if (
+    !searchModule ||
+    !groupsModule ||
+    !tabsModule ||
+    !sidebarDataModule ||
+    !dragStateModule ||
+    !keyboardNavModule
+  ) {
     return;
   }
 
@@ -39,6 +47,7 @@
   let searchQuery = "";
   let collapsedGroupIds = new Set();
   let previousVisibleTabIds = new Set();
+  let focusedTabId = null;
   let contextMenuTabId = null;
   let pinnedDragContext = null;
   let favoriteDragContext = null;
@@ -1400,6 +1409,7 @@
     const item = document.createElement("button");
     item.type = "button";
     item.className = "bts-context-menu-item";
+    item.setAttribute("role", "menuitem");
     item.textContent = label;
     const isDisabled = Boolean(options.disabled);
 
@@ -1646,6 +1656,10 @@
 
     requestAnimationFrame(() => {
       positionContextMenu(x, y);
+      const firstMenuItem = contextMenuEl.querySelector(".bts-context-menu-item:not(.is-disabled)");
+      if (firstMenuItem && typeof firstMenuItem.focus === "function") {
+        firstMenuItem.focus();
+      }
     });
   }
 
@@ -1762,12 +1776,114 @@
     return searchModule.filterTabs(tabsForToday, searchQuery);
   }
 
+  function getVisibleTabIds(visibleTabs) {
+    return keyboardNavModule.normalizeTabIds(
+      (Array.isArray(visibleTabs) ? visibleTabs : []).map((tab) => tab?.id)
+    );
+  }
+
+  function getActiveSnapshotTabId() {
+    return latestSnapshot.tabs.find((tab) => tab.active)?.id;
+  }
+
+  function focusRenderedTabRow(tabId, options = {}) {
+    if (!Number.isInteger(tabId)) {
+      return;
+    }
+
+    const { preventScroll = true } = options;
+    requestAnimationFrame(() => {
+      const row = tabList.querySelector(`.bts-tab-row[data-tab-id="${tabId}"]`);
+      if (!row || typeof row.focus !== "function") {
+        return;
+      }
+
+      row.focus({ preventScroll });
+    });
+  }
+
+  function moveFocusedTabByDirection(direction) {
+    const visibleTabs = getVisibleTabs();
+    const tabIds = getVisibleTabIds(visibleTabs);
+    const nextFocusedTabId = keyboardNavModule.getNextFocusTabId({
+      tabIds,
+      currentFocusedTabId: focusedTabId,
+      activeTabId: getActiveSnapshotTabId(),
+      direction
+    });
+
+    if (!Number.isInteger(nextFocusedTabId)) {
+      return;
+    }
+
+    focusedTabId = nextFocusedTabId;
+    renderTabList();
+    focusRenderedTabRow(nextFocusedTabId);
+  }
+
+  async function activateFocusedTab() {
+    const visibleTabs = getVisibleTabs();
+    const tabIds = getVisibleTabIds(visibleTabs);
+    const tabId = keyboardNavModule.resolveFocusTabId({
+      tabIds,
+      currentFocusedTabId: focusedTabId,
+      activeTabId: getActiveSnapshotTabId()
+    });
+
+    if (!Number.isInteger(tabId)) {
+      return;
+    }
+
+    focusedTabId = tabId;
+    await sendMessage({
+      type: "sidebar:activateTab",
+      payload: { tabId }
+    });
+  }
+
+  async function closeFocusedTab() {
+    const visibleTabs = getVisibleTabs();
+    const tabIds = getVisibleTabIds(visibleTabs);
+    const tabId = keyboardNavModule.resolveFocusTabId({
+      tabIds,
+      currentFocusedTabId: focusedTabId,
+      activeTabId: getActiveSnapshotTabId()
+    });
+
+    if (!Number.isInteger(tabId)) {
+      return;
+    }
+
+    focusedTabId = keyboardNavModule.getFocusAfterClose({
+      tabIds,
+      closingTabId: tabId,
+      currentFocusedTabId: focusedTabId,
+      activeTabId: getActiveSnapshotTabId()
+    });
+
+    await sendMessage({
+      type: "sidebar:closeTab",
+      payload: { tabId }
+    });
+  }
+
+  function isEditableTarget(target) {
+    if (!target || typeof target !== "object") {
+      return false;
+    }
+
+    const tagName = String(target.tagName || "").toUpperCase();
+    return tagName === "INPUT" || tagName === "TEXTAREA" || Boolean(target.isContentEditable);
+  }
+
   async function activateFirstVisibleTab() {
     const tabs = getVisibleTabs();
     const first = tabs[0];
     if (!first) {
       return;
     }
+
+    focusedTabId = first.id;
     await sendMessage({
       type: "sidebar:activateTab",
       payload: { tabId: first.id }
@@ -1805,38 +1921,51 @@
 
   function renderTabList() {
     const visibleTabs = getVisibleTabs();
+    const hadTabRowFocus = shadowRoot.activeElement?.classList?.contains?.("bts-tab-row");
     renderArcSections();
 
-    const visibleTabIds = new Set(
-      visibleTabs
-        .map((tab) => tab?.id)
-        .filter((tabId) => Number.isInteger(tabId))
-    );
+    const visibleTabIdList = getVisibleTabIds(visibleTabs);
+    const visibleTabIds = new Set(visibleTabIdList);
 
     const enteringTabIds = new Set();
-    for (const tabId of visibleTabIds) {
+    for (const tabId of visibleTabIdList) {
       if (!previousVisibleTabIds.has(tabId)) {
         enteringTabIds.add(tabId);
       }
     }
 
-    const activeTabId = latestSnapshot.tabs.find((tab) => tab.active)?.id;
+    const activeTabId = getActiveSnapshotTabId();
+    focusedTabId = keyboardNavModule.resolveFocusTabId({
+      tabIds: visibleTabIdList,
+      currentFocusedTabId: focusedTabId,
+      activeTabId
+    });
+
     tabsModule.renderTabList({
       container: tabList,
       tabs: visibleTabs,
       groups: latestSnapshot.groups,
       activeTabId,
+      focusedTabId,
       collapsedGroupIds,
       isSearching: Boolean(searchQuery.trim()),
       enteringTabIds,
       handlers: {
         onActivate: (tabId) => {
+          focusedTabId = tabId;
           void sendMessage({
             type: "sidebar:activateTab",
             payload: { tabId }
           });
         },
         onClose: (tabId) => {
+          focusedTabId = keyboardNavModule.getFocusAfterClose({
+            tabIds: visibleTabIdList,
+            closingTabId: tabId,
+            currentFocusedTabId: focusedTabId,
+            activeTabId
+          });
+
           void sendMessage({
             type: "sidebar:closeTab",
             payload: { tabId }
@@ -1851,9 +1980,14 @@
           void persistWindowState();
         },
         onContextMenu: ({ tab, x, y }) => {
+          focusedTabId = tab?.id;
           openContextMenuForTab(tab, x, y);
         },
+        onFocus: (tabId) => {
+          focusedTabId = tabId;
+        },
         onDragStart: (tabId) => {
+          focusedTabId = tabId;
           draggingTabId = tabId;
         },
         getDraggingTabId: () => draggingTabId,
@@ -1867,6 +2001,10 @@
       },
       groupUtils: groupsModule
     });
+
+    if (hadTabRowFocus && Number.isInteger(focusedTabId)) {
+      focusRenderedTabRow(focusedTabId, { preventScroll: true });
+    }
 
     previousVisibleTabIds = visibleTabIds;
 
@@ -2008,11 +2146,21 @@
   searchInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
+      event.stopPropagation();
       void activateFirstVisibleTab();
       return;
     }
 
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      moveFocusedTabByDirection(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+
     if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
       if (searchQuery) {
         searchQuery = "";
         searchInput.value = "";
@@ -2051,6 +2199,7 @@
     if (event.key === "Escape" && contextMenuTabId !== null) {
       event.preventDefault();
       closeContextMenu();
+      focusRenderedTabRow(focusedTabId, { preventScroll: true });
       return;
     }
 
@@ -2062,9 +2211,48 @@
       return;
     }
 
-    if (event.key === "Escape" && sidebarOpen && !searchQuery) {
+    if (event.key === "Escape") {
       event.preventDefault();
-      setOpen(false, { persist: true, broadcast: true, animate: true });
+      if (searchQuery) {
+        searchQuery = "";
+        searchInput.value = "";
+        renderTabList();
+        return;
+      }
+
+      if (sidebarOpen) {
+        setOpen(false, { persist: true, broadcast: true, animate: true });
+      }
+      return;
+    }
+
+    if (!sidebarOpen || contextMenuTabId !== null) {
+      return;
+    }
+
+    if (isEditableTarget(event.target)) {
+      return;
+    }
+
+    if (event.metaKey || event.ctrlKey || event.altKey) {
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveFocusedTabByDirection(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void activateFocusedTab();
+      return;
+    }
+
+    if (event.key === "Backspace" || event.key === "Delete") {
+      event.preventDefault();
+      void closeFocusedTab();
     }
   });
 

@@ -101,6 +101,12 @@
   background: var(--bts-sidebar-hover);
 }
 
+.bts-context-menu-item:focus-visible {
+  outline: 2px solid var(--bts-sidebar-accent);
+  outline-offset: -1px;
+  background: var(--bts-sidebar-hover);
+}
+
 .bts-context-menu-item.is-destructive {
   color: #d93025;
 }
@@ -637,6 +643,11 @@
 
 .bts-tab-row:hover {
   background: var(--bts-sidebar-hover);
+}
+
+.bts-tab-row:focus-visible {
+  outline: 2px solid var(--bts-sidebar-accent);
+  outline-offset: -1px;
 }
 
 .bts-tab-row.is-active {

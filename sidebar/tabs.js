@@ -60,12 +60,16 @@
     return favicon;
   }
 
-  function createTabRow(tab, activeTabId, handlers, enteringTabIds) {
+  function createTabRow(tab, activeTabId, focusedTabId, handlers, enteringTabIds) {
     const row = createEl("div", "bts-tab-row");
     row.dataset.tabId = String(tab.id);
     row.title = tab?.title || tab?.url || "Tab";
+    row.tabIndex = tab?.id === focusedTabId ? 0 : -1;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", tab?.title || tab?.url || "Tab");
     if (tab?.id === activeTabId) {
       row.classList.add("is-active");
+      row.setAttribute("aria-current", "page");
     }
     if (enteringTabIds?.has(tab.id)) {
       row.classList.add("is-entering");
@@ -93,11 +97,17 @@
     });
 
     row.addEventListener("click", () => {
+      handlers.onFocus?.(tab.id);
       handlers.onActivate?.(tab.id);
+    });
+
+    row.addEventListener("focus", () => {
+      handlers.onFocus?.(tab.id);
     });
 
     row.draggable = true;
     row.addEventListener("dragstart", (event) => {
+      handlers.onFocus?.(tab.id);
       handlers.onDragStart?.(tab.id);
       row.classList.add("is-dragging");
       if (event.dataTransfer) {
@@ -138,6 +148,7 @@
     row.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      handlers.onFocus?.(tab.id);
       handlers.onContextMenu?.({
         tab,
         x: event.clientX,
@@ -173,6 +184,7 @@
       handlers,
       colorHex,
       activeTabId,
+      focusedTabId,
       enteringTabIds,
       allowCollapse
     } = options;
@@ -186,7 +198,7 @@
     const body = createEl("div", "bts-group-body");
 
     for (const tab of section.tabs) {
-      const row = createTabRow(tab, activeTabId, handlers, enteringTabIds);
+      const row = createTabRow(tab, activeTabId, focusedTabId, handlers, enteringTabIds);
       body.append(row);
     }
 
@@ -210,6 +222,7 @@
       tabs,
       groups,
       activeTabId,
+      focusedTabId,
       collapsedGroupIds,
       isSearching,
       enteringTabIds,
@@ -221,6 +234,7 @@
       return;
     }
 
+    container.setAttribute("role", "list");
     container.replaceChildren();
     if (!tabs?.length) {
       const empty = createEl("div", "bts-empty-state", "No tabs match this view.");
@@ -242,13 +256,14 @@
           handlers,
           colorHex,
           activeTabId,
+          focusedTabId,
           enteringTabIds,
           allowCollapse: !isSearching
         });
         fragment.append(groupSection);
       } else {
         for (const tab of section.tabs) {
-          const row = createTabRow(tab, activeTabId, handlers, enteringTabIds);
+          const row = createTabRow(tab, activeTabId, focusedTabId, handlers, enteringTabIds);
           fragment.append(row);
         }
       }
