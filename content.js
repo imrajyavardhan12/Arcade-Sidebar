@@ -39,6 +39,7 @@
   let previousVisibleTabIds = new Set();
   let contextMenuTabId = null;
   let pinnedDragContext = null;
+  let favoriteDragContext = null;
   let draggingTabId = null;
   let suppressPointerUntil = 0;
   let runtimeContextAlive = true;
@@ -583,6 +584,15 @@
     await persistSidebarData();
   }
 
+  async function removeFavoriteById(itemId) {
+    sidebarData.favorites = sidebarData.favorites.filter((item) => item.id !== itemId);
+    await persistSidebarData();
+  }
+
+  function findFavoriteById(itemId) {
+    return sidebarData.favorites.find((item) => item.id === itemId) || null;
+  }
+
   async function pinTabInActiveSpace(tab) {
     const item = createSavedItemFromTab(tab);
     if (!item) {
@@ -772,6 +782,20 @@
     });
 
     if (options.favorite) {
+      button.draggable = true;
+      button.addEventListener("dragstart", (event) => {
+        favoriteDragContext = { itemId: item.id };
+        button.classList.add("is-dragging");
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", item.url || item.id);
+        }
+      });
+      button.addEventListener("dragend", () => {
+        favoriteDragContext = null;
+        button.classList.remove("is-dragging");
+        clearDragDropVisualState();
+      });
       button.append(favicon);
       return button;
     }
@@ -793,7 +817,7 @@
       }
 
       void unpinUrlInActiveSpace(item.url).then(() => {
-        renderArcSections();
+        renderTabList();
       });
     });
 
@@ -806,7 +830,7 @@
       favorite: false,
       onRemove: async () => {
         await removePinnedLinkById(node.id);
-        renderArcSections();
+        renderTabList();
       }
     });
     button.dataset.pinnedLinkId = String(node.id);
@@ -967,7 +991,195 @@
     await persistSidebarData();
     pinnedDragContext = null;
     clearDragDropVisualState();
-    renderArcSections();
+    renderTabList();
+  }
+
+  async function movePinnedLinkToTopLevel() {
+    if (!pinnedDragContext?.linkId) {
+      return;
+    }
+
+    const activeSpace = getActiveSpace();
+    const currentItems = getActiveSpacePinnedNodes().slice();
+
+    if (!pinnedDragContext.fromFolderId) {
+      pinnedDragContext = null;
+      clearDragDropVisualState();
+      return;
+    }
+
+    const sourceFolder = currentItems.find(
+      (node) => node?.type === "folder" && node.id === pinnedDragContext.fromFolderId
+    );
+
+    if (!sourceFolder) {
+      pinnedDragContext = null;
+      clearDragDropVisualState();
+      return;
+    }
+
+    const childIndex = sourceFolder.children.findIndex(
+      (child) => child.id === pinnedDragContext.linkId
+    );
+
+    if (childIndex < 0) {
+      pinnedDragContext = null;
+      clearDragDropVisualState();
+      return;
+    }
+
+    const movedNode = sourceFolder.children.splice(childIndex, 1)[0];
+    const movedUrlKey = normalizeUrlKey(movedNode?.url);
+    const alreadyTopLevel = currentItems.some(
+      (node) => node?.type === "link" && normalizeUrlKey(node.url) === movedUrlKey
+    );
+
+    if (!alreadyTopLevel) {
+      currentItems.push({
+        ...movedNode,
+        type: "link"
+      });
+    }
+
+    sidebarData.pinnedBySpace[activeSpace.id] = currentItems;
+    await persistSidebarData();
+    pinnedDragContext = null;
+    clearDragDropVisualState();
+    renderTabList();
+  }
+
+  async function moveFavoriteToPinnedTopLevel() {
+    const favoriteId = favoriteDragContext?.itemId;
+    if (!favoriteId) {
+      return;
+    }
+
+    const favoriteItem = findFavoriteById(favoriteId);
+    if (!favoriteItem) {
+      favoriteDragContext = null;
+      clearDragDropVisualState();
+      return;
+    }
+
+    const activeSpace = getActiveSpace();
+    const currentItems = getActiveSpacePinnedNodes().slice();
+    const key = normalizeUrlKey(favoriteItem.url);
+    const updated = updatePinnedLinkByUrl(currentItems, key, (existing) => {
+      existing.title = favoriteItem.title;
+      existing.favIconUrl = favoriteItem.favIconUrl || existing.favIconUrl;
+    });
+
+    if (!updated) {
+      currentItems.push(createPinnedLinkNodeFromSavedItem(favoriteItem));
+    }
+
+    sidebarData.pinnedBySpace[activeSpace.id] = currentItems;
+    sidebarData.favorites = sidebarData.favorites.filter((item) => item.id !== favoriteId);
+    await persistSidebarData();
+    favoriteDragContext = null;
+    clearDragDropVisualState();
+    renderTabList();
+  }
+
+  async function moveFavoriteToFolder(targetFolderId) {
+    const favoriteId = favoriteDragContext?.itemId;
+    if (!favoriteId) {
+      return;
+    }
+
+    const favoriteItem = findFavoriteById(favoriteId);
+    if (!favoriteItem) {
+      favoriteDragContext = null;
+      clearDragDropVisualState();
+      return;
+    }
+
+    const activeSpace = getActiveSpace();
+    const currentItems = getActiveSpacePinnedNodes().slice();
+    const targetFolder = currentItems.find(
+      (node) => node?.type === "folder" && node.id === targetFolderId
+    );
+
+    if (!targetFolder) {
+      return;
+    }
+
+    const key = normalizeUrlKey(favoriteItem.url);
+    const existingChild = targetFolder.children.find(
+      (child) => normalizeUrlKey(child.url) === key
+    );
+
+    if (existingChild) {
+      existingChild.title = favoriteItem.title;
+      existingChild.favIconUrl = favoriteItem.favIconUrl || existingChild.favIconUrl;
+    } else {
+      targetFolder.children.push(createPinnedLinkNodeFromSavedItem(favoriteItem));
+    }
+
+    sidebarData.pinnedBySpace[activeSpace.id] = currentItems;
+    sidebarData.favorites = sidebarData.favorites.filter((item) => item.id !== favoriteId);
+    await persistSidebarData();
+    favoriteDragContext = null;
+    clearDragDropVisualState();
+    renderTabList();
+  }
+
+  async function movePinnedLinkToFavorites() {
+    const linkId = pinnedDragContext?.linkId;
+    if (!linkId) {
+      return;
+    }
+
+    const activeSpaceItems = getActiveSpacePinnedNodes();
+    const sourceNode = findPinnedLinkNodeById(activeSpaceItems, linkId);
+    if (!sourceNode) {
+      pinnedDragContext = null;
+      clearDragDropVisualState();
+      return;
+    }
+
+    const sourceUrlKey = normalizeUrlKey(sourceNode.url);
+    const existedBefore = isUrlInFavorites(sourceUrlKey);
+    const countBefore = sidebarData.favorites.length;
+
+    await addTabToFavorites(sourceNode);
+
+    const existsAfter = isUrlInFavorites(sourceUrlKey);
+    const countAfter = sidebarData.favorites.length;
+    const movedToFavorites = existedBefore || existsAfter || countAfter > countBefore;
+
+    if (!movedToFavorites) {
+      pinnedDragContext = null;
+      clearDragDropVisualState();
+      return;
+    }
+
+    await removePinnedLinkById(linkId);
+    pinnedDragContext = null;
+    clearDragDropVisualState();
+    renderTabList();
+  }
+
+  async function movePinnedLinkToToday() {
+    const linkId = pinnedDragContext?.linkId;
+    if (!linkId) {
+      return;
+    }
+    await removePinnedLinkById(linkId);
+    pinnedDragContext = null;
+    clearDragDropVisualState();
+    renderTabList();
+  }
+
+  async function moveFavoriteToToday() {
+    const favoriteId = favoriteDragContext?.itemId;
+    if (!favoriteId) {
+      return;
+    }
+    await removeFavoriteById(favoriteId);
+    favoriteDragContext = null;
+    clearDragDropVisualState();
+    renderTabList();
   }
 
   function getSnapshotTabById(tabId) {
@@ -982,7 +1194,7 @@
 
     const resolvedTab = await resolveTabForStorage(tab);
     await pinTabInActiveSpace(resolvedTab);
-    renderArcSections();
+    renderTabList();
   }
 
   async function favoriteSnapshotTab(tabId) {
@@ -993,7 +1205,7 @@
 
     const resolvedTab = await resolveTabForStorage(tab);
     await addTabToFavorites(resolvedTab);
-    renderArcSections();
+    renderTabList();
   }
 
   function extractPinnedLinkByUrl(nodes, urlKey, targetFolderId) {
@@ -1086,7 +1298,7 @@
 
     sidebarData.pinnedBySpace[activeSpace.id] = nextNodes;
     await persistSidebarData();
-    renderArcSections();
+    renderTabList();
   }
 
   function createPinnedFolderSection(folder) {
@@ -1138,6 +1350,11 @@
         return;
       }
 
+      if (favoriteDragContext?.itemId) {
+        await moveFavoriteToFolder(folder.id);
+        return;
+      }
+
       if (Number.isInteger(draggingTabId)) {
         const droppedTabId = draggingTabId;
         draggingTabId = null;
@@ -1146,7 +1363,11 @@
     };
 
     header.addEventListener("dragover", (event) => {
-      if (!pinnedDragContext?.linkId && !Number.isInteger(draggingTabId)) {
+      if (
+        !pinnedDragContext?.linkId &&
+        !favoriteDragContext?.itemId &&
+        !Number.isInteger(draggingTabId)
+      ) {
         return;
       }
       event.preventDefault();
@@ -1166,7 +1387,11 @@
     body.className = "bts-pinned-folder-body";
 
     body.addEventListener("dragover", (event) => {
-      if (!pinnedDragContext?.linkId && !Number.isInteger(draggingTabId)) {
+      if (
+        !pinnedDragContext?.linkId &&
+        !favoriteDragContext?.itemId &&
+        !Number.isInteger(draggingTabId)
+      ) {
         return;
       }
       event.preventDefault();
@@ -1253,7 +1478,7 @@
       button.addEventListener("click", () => {
         sidebarData.activeSpaceId = space.id;
         void persistSidebarData().then(() => {
-          renderArcSections();
+          renderTabList();
         });
       });
       spacesList.append(button);
@@ -1269,6 +1494,7 @@
   function clearDragDropVisualState() {
     favoritesGrid.classList.remove("is-tab-drop-target");
     pinnedList.classList.remove("is-tab-drop-target");
+    tabList.classList.remove("is-pin-drop-target");
     const highlightedFolders = pinnedList.querySelectorAll(".bts-pinned-folder.is-drop-target");
     for (const folderEl of highlightedFolders) {
       folderEl.classList.remove("is-drop-target");
@@ -1277,7 +1503,7 @@
 
   function setupArcDropZones() {
     favoritesGrid.addEventListener("dragover", (event) => {
-      if (!Number.isInteger(draggingTabId)) {
+      if (!Number.isInteger(draggingTabId) && !pinnedDragContext?.linkId) {
         return;
       }
       event.preventDefault();
@@ -1289,19 +1515,30 @@
     });
 
     favoritesGrid.addEventListener("drop", async (event) => {
-      if (!Number.isInteger(draggingTabId)) {
+      const draggingLiveTab = Number.isInteger(draggingTabId);
+      const draggingPinnedLink = Boolean(pinnedDragContext?.linkId);
+      if (!draggingLiveTab && !draggingPinnedLink) {
         return;
       }
       event.preventDefault();
       event.stopPropagation();
       clearDragDropVisualState();
+
+      if (draggingPinnedLink) {
+        await movePinnedLinkToFavorites();
+        return;
+      }
+
       const droppedTabId = draggingTabId;
       draggingTabId = null;
       await favoriteSnapshotTab(droppedTabId);
     });
 
     pinnedList.addEventListener("dragover", (event) => {
-      if (!Number.isInteger(draggingTabId)) {
+      const draggingLiveTab = Number.isInteger(draggingTabId);
+      const draggingPinnedLink = Boolean(pinnedDragContext?.linkId);
+      const draggingFavorite = Boolean(favoriteDragContext?.itemId);
+      if (!draggingLiveTab && !draggingPinnedLink && !draggingFavorite) {
         return;
       }
 
@@ -1320,7 +1557,10 @@
     });
 
     pinnedList.addEventListener("drop", async (event) => {
-      if (!Number.isInteger(draggingTabId)) {
+      const draggingLiveTab = Number.isInteger(draggingTabId);
+      const draggingPinnedLink = Boolean(pinnedDragContext?.linkId);
+      const draggingFavorite = Boolean(favoriteDragContext?.itemId);
+      if (!draggingLiveTab && !draggingPinnedLink && !draggingFavorite) {
         return;
       }
 
@@ -1333,9 +1573,44 @@
       event.preventDefault();
       event.stopPropagation();
       clearDragDropVisualState();
+      if (draggingPinnedLink) {
+        await movePinnedLinkToTopLevel();
+        return;
+      }
+
+      if (draggingFavorite) {
+        await moveFavoriteToPinnedTopLevel();
+        return;
+      }
+
       const droppedTabId = draggingTabId;
       draggingTabId = null;
       await pinSnapshotTabToSidebar(droppedTabId);
+    });
+
+    tabList.addEventListener("dragover", (event) => {
+      if (!pinnedDragContext?.linkId && !favoriteDragContext?.itemId) {
+        return;
+      }
+      event.preventDefault();
+      tabList.classList.add("is-pin-drop-target");
+    });
+
+    tabList.addEventListener("dragleave", () => {
+      tabList.classList.remove("is-pin-drop-target");
+    });
+
+    tabList.addEventListener("drop", async (event) => {
+      if (!pinnedDragContext?.linkId && !favoriteDragContext?.itemId) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (pinnedDragContext?.linkId) {
+        await movePinnedLinkToToday();
+        return;
+      }
+      await moveFavoriteToToday();
     });
   }
 
@@ -1350,7 +1625,7 @@
     sidebarData.pinnedBySpace[newSpace.id] = [];
     sidebarData.activeSpaceId = newSpace.id;
     await persistSidebarData();
-    renderArcSections();
+    renderTabList();
   }
 
   function getStateKey() {
@@ -1475,7 +1750,7 @@
         items.push(
           createContextMenuItem("Remove from favorites", async () => {
             await removeFavoriteByUrl(tabUrl);
-            renderArcSections();
+            renderTabList();
           })
         );
       } else {
@@ -1491,7 +1766,7 @@
             createContextMenuItem("Add to favorites", async () => {
               const resolvedTab = await resolveTabForStorage(tab);
               await addTabToFavorites(resolvedTab);
-              renderArcSections();
+              renderTabList();
             })
           );
         }
@@ -1501,7 +1776,7 @@
         items.push(
           createContextMenuItem("Unpin from sidebar", async () => {
             await unpinUrlInActiveSpace(tabUrl);
-            renderArcSections();
+            renderTabList();
           })
         );
       } else {
@@ -1509,7 +1784,7 @@
           createContextMenuItem("Pin to sidebar", async () => {
             const resolvedTab = await resolveTabForStorage(tab);
             await pinTabInActiveSpace(resolvedTab);
-            renderArcSections();
+            renderTabList();
           })
         );
       }
@@ -1750,7 +2025,14 @@
   }
 
   function getVisibleTabs() {
-    return searchModule.filterTabs(latestSnapshot.tabs, searchQuery);
+    const tabsForToday = latestSnapshot.tabs.filter((tab) => {
+      const key = normalizeUrlKey(tab?.url);
+      if (!isHttpUrl(key)) {
+        return true;
+      }
+      return !isUrlPinnedInActiveSpace(key) && !isUrlInFavorites(key);
+    });
+    return searchModule.filterTabs(tabsForToday, searchQuery);
   }
 
   async function activateFirstVisibleTab() {
@@ -2090,6 +2372,7 @@
   shadowRoot.addEventListener("dragend", () => {
     draggingTabId = null;
     pinnedDragContext = null;
+    favoriteDragContext = null;
     clearDragDropVisualState();
   });
 
@@ -2151,7 +2434,7 @@
       }
 
       sidebarData = sanitizeSidebarData(changes[SIDEBAR_DATA_KEY].newValue);
-      renderArcSections();
+      renderTabList();
     });
   }
 

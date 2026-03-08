@@ -210,6 +210,11 @@
   transform: translateY(-1px);
 }
 
+.bts-favorite-btn.is-dragging {
+  opacity: 0.6;
+  transform: scale(0.98);
+}
+
 .bts-favorite-slot {
   border: 1px dashed var(--bts-sidebar-border);
   opacity: 0.35;
@@ -512,6 +517,12 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.bts-tab-list.is-pin-drop-target {
+  outline: 1px dashed var(--bts-sidebar-accent);
+  outline-offset: -2px;
+  border-radius: 10px;
 }
 
 .bts-empty-state {
