@@ -4,6 +4,7 @@ const INJECT_FILES = [
   "sidebar/search.js",
   "sidebar/groups.js",
   "sidebar/tabs.js",
+  "sidebar/sidebar-data.js",
   "sidebar/drag-state.js",
   "content.js"
 ];

@@ -20,10 +20,12 @@ jobs:
       - name: Run tests and validation checks
         run: |
           node --test tests/drag-state.test.js
+          node --test tests/sidebar-data.test.js
           node --check background.js
           node --check content.js
           node --check sidebar/search.js
           node --check sidebar/groups.js
           node --check sidebar/tabs.js
+          node --check sidebar/sidebar-data.js
           node --check sidebar/drag-state.js
           node -e "const fs=require('fs'); JSON.parse(fs.readFileSync('manifest.json','utf8'));"

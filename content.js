@@ -11,9 +11,10 @@
   const searchModule = globalScope.BraveSidebarSearch;
   const groupsModule = globalScope.BraveSidebarGroups;
   const tabsModule = globalScope.BraveSidebarTabs;
+  const sidebarDataModule = globalScope.BraveSidebarData;
   const dragStateModule = globalScope.BraveSidebarDragState;
 
-  if (!searchModule || !groupsModule || !tabsModule || !dragStateModule) {
+  if (!searchModule || !groupsModule || !tabsModule || !sidebarDataModule || !dragStateModule) {
     return;
   }
 
@@ -267,20 +268,7 @@
   }
 
   function createDefaultSidebarData() {
-    return {
-      spaces: [
-        {
-          id: DEFAULT_SPACE.id,
-          name: DEFAULT_SPACE.name,
-          icon: DEFAULT_SPACE.icon
-        }
-      ],
-      activeSpaceId: DEFAULT_SPACE.id,
-      favorites: [],
-      pinnedBySpace: {
-        [DEFAULT_SPACE.id]: []
-      }
-    };
+    return sidebarDataModule.createDefaultSidebarData(DEFAULT_SPACE);
   }
 
   function isHttpUrl(url) {
@@ -300,158 +288,40 @@
   }
 
   function sanitizeSavedItem(item) {
-    const normalizedUrl = normalizeUrlKey(item?.url);
-    if (!normalizedUrl || !isHttpUrl(normalizedUrl)) {
-      return null;
-    }
-
-    return {
-      id: String(item?.id || `item-${Date.now()}-${Math.random().toString(16).slice(2)}`),
-      title: String(item?.title || normalizedUrl),
-      url: normalizedUrl,
-      favIconUrl: typeof item?.favIconUrl === "string" ? item.favIconUrl : ""
-    };
+    return sidebarDataModule.sanitizeSavedItem(item, {
+      normalizeUrlKey,
+      isHttpUrl
+    });
   }
 
   function sanitizePinnedLinkNode(node) {
-    const item = sanitizeSavedItem(node);
-    if (!item) {
-      return null;
-    }
-
-    return {
-      type: "link",
-      id: String(node?.id || item.id || `plink-${Date.now()}`),
-      title: item.title,
-      url: item.url,
-      favIconUrl: item.favIconUrl
-    };
+    return sidebarDataModule.sanitizePinnedLinkNode(node, {
+      normalizeUrlKey,
+      isHttpUrl
+    });
   }
 
   function sanitizePinnedFolderNode(node) {
-    const id = String(node?.id || `pfolder-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    const title = String(node?.title || "New Folder").trim() || "New Folder";
-    const children = [];
-    const seen = new Set();
-    const rawChildren = Array.isArray(node?.children) ? node.children : [];
-
-    for (const child of rawChildren) {
-      const linkNode = sanitizePinnedLinkNode(child);
-      if (!linkNode) {
-        continue;
-      }
-      const key = normalizeUrlKey(linkNode.url);
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      children.push(linkNode);
-    }
-
-    return {
-      type: "folder",
-      id,
-      title,
-      collapsed: Boolean(node?.collapsed),
-      children
-    };
+    return sidebarDataModule.sanitizePinnedFolderNode(node, {
+      normalizeUrlKey,
+      isHttpUrl
+    });
   }
 
   function sanitizePinnedNode(node) {
-    if (node?.type === "folder") {
-      return sanitizePinnedFolderNode(node);
-    }
-
-    return sanitizePinnedLinkNode(node);
+    return sidebarDataModule.sanitizePinnedNode(node, {
+      normalizeUrlKey,
+      isHttpUrl
+    });
   }
 
   function sanitizeSidebarData(rawValue) {
-    const fallback = createDefaultSidebarData();
-    if (!rawValue || typeof rawValue !== "object") {
-      return fallback;
-    }
-
-    const spaces = Array.isArray(rawValue.spaces)
-      ? rawValue.spaces
-          .map((space) => {
-            const id = String(space?.id || "").trim();
-            if (!id) {
-              return null;
-            }
-            return {
-              id,
-              name: String(space?.name || "Untitled Space"),
-              icon: String(space?.icon || "•")
-            };
-          })
-          .filter(Boolean)
-      : [];
-
-    const normalizedSpaces = spaces.length > 0 ? spaces : fallback.spaces;
-    const validSpaceIds = new Set(normalizedSpaces.map((space) => space.id));
-
-    const activeSpaceId = validSpaceIds.has(rawValue.activeSpaceId)
-      ? rawValue.activeSpaceId
-      : normalizedSpaces[0].id;
-
-    const favorites = [];
-    const favoriteSeen = new Set();
-    const rawFavorites = Array.isArray(rawValue.favorites) ? rawValue.favorites : [];
-    for (const item of rawFavorites) {
-      const sanitized = sanitizeSavedItem(item);
-      if (!sanitized) {
-        continue;
-      }
-      const key = normalizeUrlKey(sanitized.url);
-      if (favoriteSeen.has(key)) {
-        continue;
-      }
-      favoriteSeen.add(key);
-      favorites.push(sanitized);
-      if (favorites.length >= MAX_FAVORITES) {
-        break;
-      }
-    }
-
-    const pinnedBySpace = {};
-    const rawPinnedBySpace =
-      rawValue.pinnedBySpace && typeof rawValue.pinnedBySpace === "object"
-        ? rawValue.pinnedBySpace
-        : {};
-
-    for (const space of normalizedSpaces) {
-      const spaceItems = Array.isArray(rawPinnedBySpace[space.id])
-        ? rawPinnedBySpace[space.id]
-        : [];
-      const deduped = [];
-      const seen = new Set();
-      for (const item of spaceItems) {
-        const sanitized = sanitizePinnedNode(item);
-        if (!sanitized) {
-          continue;
-        }
-
-        if (sanitized.type === "folder") {
-          deduped.push(sanitized);
-          continue;
-        }
-
-        const key = normalizeUrlKey(sanitized.url);
-        if (seen.has(key)) {
-          continue;
-        }
-        seen.add(key);
-        deduped.push(sanitized);
-      }
-      pinnedBySpace[space.id] = deduped;
-    }
-
-    return {
-      spaces: normalizedSpaces,
-      activeSpaceId,
-      favorites,
-      pinnedBySpace
-    };
+    return sidebarDataModule.sanitizeSidebarData(rawValue, {
+      defaultSpace: DEFAULT_SPACE,
+      maxFavorites: MAX_FAVORITES,
+      normalizeUrlKey,
+      isHttpUrl
+    });
   }
 
   function getActiveSpace() {
@@ -483,46 +353,18 @@
   }
 
   function createSavedItemFromTab(tab) {
-    const normalizedUrl = normalizeUrlKey(tab?.url);
-    if (!normalizedUrl || !isHttpUrl(normalizedUrl)) {
-      return null;
-    }
-
-    return {
-      id: `item-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      title: tab?.title || normalizedUrl,
-      url: normalizedUrl,
-      favIconUrl: tab?.favIconUrl || ""
-    };
+    return sidebarDataModule.createSavedItemFromTab(tab, {
+      normalizeUrlKey,
+      isHttpUrl
+    });
   }
 
   function createPinnedLinkNodeFromSavedItem(item) {
-    return {
-      type: "link",
-      id: `plink-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      title: item.title,
-      url: item.url,
-      favIconUrl: item.favIconUrl || ""
-    };
+    return sidebarDataModule.createPinnedLinkNodeFromSavedItem(item);
   }
 
   function updatePinnedLinkByUrl(nodes, urlKey, updateLink) {
-    for (const node of nodes) {
-      if (node?.type === "link" && normalizeUrlKey(node.url) === urlKey) {
-        updateLink(node);
-        return true;
-      }
-
-      if (node?.type === "folder" && Array.isArray(node.children)) {
-        const match = node.children.find((child) => normalizeUrlKey(child.url) === urlKey);
-        if (match) {
-          updateLink(match);
-          return true;
-        }
-      }
-    }
-
-    return false;
+    return dragStateModule.updatePinnedLinkByUrl(nodes, urlKey, updateLink);
   }
 
   async function addTabToFavorites(tab) {
