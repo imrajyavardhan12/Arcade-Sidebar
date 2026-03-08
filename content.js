@@ -654,6 +654,23 @@
     await persistSidebarData();
   }
 
+  function findPinnedLinkNodeById(nodes, linkId) {
+    for (const node of nodes) {
+      if (node?.type === "link" && node.id === linkId) {
+        return node;
+      }
+
+      if (node?.type === "folder" && Array.isArray(node.children)) {
+        const child = node.children.find((item) => item.id === linkId);
+        if (child) {
+          return child;
+        }
+      }
+    }
+
+    return null;
+  }
+
   async function unpinUrlInActiveSpace(url) {
     const activeSpace = getActiveSpace();
     const key = normalizeUrlKey(url);
@@ -814,6 +831,7 @@
     button.addEventListener("dragend", () => {
       pinnedDragContext = null;
       button.classList.remove("is-dragging");
+      clearDragDropVisualState();
     });
 
     return button;
@@ -896,6 +914,22 @@
       return;
     }
 
+    const sourceNode = findPinnedLinkNodeById(currentItems, pinnedDragContext.linkId);
+    if (!sourceNode) {
+      return;
+    }
+
+    const sourceUrlKey = normalizeUrlKey(sourceNode.url);
+    const duplicateAlreadyInTarget = targetFolder.children.some(
+      (child) => normalizeUrlKey(child.url) === sourceUrlKey
+    );
+
+    if (duplicateAlreadyInTarget) {
+      pinnedDragContext = null;
+      clearDragDropVisualState();
+      return;
+    }
+
     let movedNode = null;
 
     if (pinnedDragContext.fromFolderId) {
@@ -924,20 +958,15 @@
       return;
     }
 
-    const alreadyInFolder = targetFolder.children.some(
-      (child) => normalizeUrlKey(child.url) === normalizeUrlKey(movedNode.url)
-    );
-
-    if (!alreadyInFolder) {
-      targetFolder.children.push({
-        ...movedNode,
-        type: "link"
-      });
-    }
+    targetFolder.children.push({
+      ...movedNode,
+      type: "link"
+    });
 
     sidebarData.pinnedBySpace[activeSpace.id] = currentItems;
     await persistSidebarData();
     pinnedDragContext = null;
+    clearDragDropVisualState();
     renderArcSections();
   }
 
@@ -1102,7 +1131,7 @@
     const handleDrop = async (event) => {
       event.preventDefault();
       event.stopPropagation();
-      section.classList.remove("is-drop-target");
+      clearDragDropVisualState();
 
       if (pinnedDragContext?.linkId) {
         await movePinnedLinkToFolder(folder.id);
@@ -1121,6 +1150,7 @@
         return;
       }
       event.preventDefault();
+      pinnedList.classList.remove("is-tab-drop-target");
       section.classList.add("is-drop-target");
     });
 
@@ -1140,6 +1170,7 @@
         return;
       }
       event.preventDefault();
+      pinnedList.classList.remove("is-tab-drop-target");
       section.classList.add("is-drop-target");
     });
 
@@ -1235,6 +1266,15 @@
     renderSpacesDock();
   }
 
+  function clearDragDropVisualState() {
+    favoritesGrid.classList.remove("is-tab-drop-target");
+    pinnedList.classList.remove("is-tab-drop-target");
+    const highlightedFolders = pinnedList.querySelectorAll(".bts-pinned-folder.is-drop-target");
+    for (const folderEl of highlightedFolders) {
+      folderEl.classList.remove("is-drop-target");
+    }
+  }
+
   function setupArcDropZones() {
     favoritesGrid.addEventListener("dragover", (event) => {
       if (!Number.isInteger(draggingTabId)) {
@@ -1254,7 +1294,7 @@
       }
       event.preventDefault();
       event.stopPropagation();
-      favoritesGrid.classList.remove("is-tab-drop-target");
+      clearDragDropVisualState();
       const droppedTabId = draggingTabId;
       draggingTabId = null;
       await favoriteSnapshotTab(droppedTabId);
@@ -1292,7 +1332,7 @@
 
       event.preventDefault();
       event.stopPropagation();
-      pinnedList.classList.remove("is-tab-drop-target");
+      clearDragDropVisualState();
       const droppedTabId = draggingTabId;
       draggingTabId = null;
       await pinSnapshotTabToSidebar(droppedTabId);
@@ -1813,6 +1853,7 @@
         },
         onDragEnd: () => {
           draggingTabId = null;
+          clearDragDropVisualState();
         }
       },
       groupUtils: groupsModule
@@ -2044,6 +2085,12 @@
     if (!path.some((node) => node?.classList?.contains?.("bts-tab-row"))) {
       closeContextMenu();
     }
+  });
+
+  shadowRoot.addEventListener("dragend", () => {
+    draggingTabId = null;
+    pinnedDragContext = null;
+    clearDragDropVisualState();
   });
 
   handleResize();
