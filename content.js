@@ -40,6 +40,7 @@
   let contextMenuTabId = null;
   let pinnedDragContext = null;
   let draggingTabId = null;
+  let suppressPointerUntil = 0;
   let runtimeContextAlive = true;
   let sidebarData = {
     spaces: [DEFAULT_SPACE],
@@ -940,6 +941,125 @@
     renderArcSections();
   }
 
+  function getSnapshotTabById(tabId) {
+    return latestSnapshot.tabs.find((tab) => tab.id === tabId) || null;
+  }
+
+  async function pinSnapshotTabToSidebar(tabId) {
+    const tab = getSnapshotTabById(tabId);
+    if (!tab) {
+      return;
+    }
+
+    const resolvedTab = await resolveTabForStorage(tab);
+    await pinTabInActiveSpace(resolvedTab);
+    renderArcSections();
+  }
+
+  async function favoriteSnapshotTab(tabId) {
+    const tab = getSnapshotTabById(tabId);
+    if (!tab) {
+      return;
+    }
+
+    const resolvedTab = await resolveTabForStorage(tab);
+    await addTabToFavorites(resolvedTab);
+    renderArcSections();
+  }
+
+  function extractPinnedLinkByUrl(nodes, urlKey, targetFolderId) {
+    let extracted = null;
+
+    const nextNodes = nodes
+      .map((node) => {
+        if (node?.type === "link") {
+          if (normalizeUrlKey(node.url) === urlKey) {
+            extracted = node;
+            return null;
+          }
+          return node;
+        }
+
+        if (node?.type === "folder" && Array.isArray(node.children)) {
+          const children = node.children.filter((child) => {
+            const isMatch = normalizeUrlKey(child.url) === urlKey;
+            if (isMatch && node.id !== targetFolderId) {
+              extracted = child;
+              return false;
+            }
+            return true;
+          });
+
+          return {
+            ...node,
+            children
+          };
+        }
+
+        return node;
+      })
+      .filter(Boolean);
+
+    return {
+      nextNodes,
+      extracted
+    };
+  }
+
+  async function pinSnapshotTabToFolder(tabId, folderId) {
+    const tab = getSnapshotTabById(tabId);
+    if (!tab) {
+      return;
+    }
+
+    const resolvedTab = await resolveTabForStorage(tab);
+    const item = createSavedItemFromTab(resolvedTab);
+    if (!item) {
+      return;
+    }
+
+    const activeSpace = getActiveSpace();
+    const currentItems = getActiveSpacePinnedNodes().slice();
+    const targetFolder = currentItems.find(
+      (node) => node?.type === "folder" && node.id === folderId
+    );
+
+    if (!targetFolder) {
+      return;
+    }
+
+    const key = normalizeUrlKey(item.url);
+    const { nextNodes, extracted } = extractPinnedLinkByUrl(currentItems, key, folderId);
+    const folderInNext = nextNodes.find((node) => node?.type === "folder" && node.id === folderId);
+    if (!folderInNext) {
+      return;
+    }
+
+    const existingChild = folderInNext.children.find(
+      (child) => normalizeUrlKey(child.url) === key
+    );
+
+    if (existingChild) {
+      existingChild.title = item.title;
+      existingChild.favIconUrl = item.favIconUrl || existingChild.favIconUrl;
+    } else {
+      const nodeToInsert = extracted
+        ? {
+            ...extracted,
+            title: item.title,
+            favIconUrl: item.favIconUrl || extracted.favIconUrl,
+            type: "link"
+          }
+        : createPinnedLinkNodeFromSavedItem(item);
+
+      folderInNext.children.push(nodeToInsert);
+    }
+
+    sidebarData.pinnedBySpace[activeSpace.id] = nextNodes;
+    await persistSidebarData();
+    renderArcSections();
+  }
+
   function createPinnedFolderSection(folder) {
     const section = document.createElement("section");
     section.className = "bts-pinned-folder";
@@ -981,12 +1101,23 @@
 
     const handleDrop = async (event) => {
       event.preventDefault();
+      event.stopPropagation();
       section.classList.remove("is-drop-target");
-      await movePinnedLinkToFolder(folder.id);
+
+      if (pinnedDragContext?.linkId) {
+        await movePinnedLinkToFolder(folder.id);
+        return;
+      }
+
+      if (Number.isInteger(draggingTabId)) {
+        const droppedTabId = draggingTabId;
+        draggingTabId = null;
+        await pinSnapshotTabToFolder(droppedTabId, folder.id);
+      }
     };
 
     header.addEventListener("dragover", (event) => {
-      if (!pinnedDragContext?.linkId) {
+      if (!pinnedDragContext?.linkId && !Number.isInteger(draggingTabId)) {
         return;
       }
       event.preventDefault();
@@ -1005,7 +1136,7 @@
     body.className = "bts-pinned-folder-body";
 
     body.addEventListener("dragover", (event) => {
-      if (!pinnedDragContext?.linkId) {
+      if (!pinnedDragContext?.linkId && !Number.isInteger(draggingTabId)) {
         return;
       }
       event.preventDefault();
@@ -1104,6 +1235,70 @@
     renderSpacesDock();
   }
 
+  function setupArcDropZones() {
+    favoritesGrid.addEventListener("dragover", (event) => {
+      if (!Number.isInteger(draggingTabId)) {
+        return;
+      }
+      event.preventDefault();
+      favoritesGrid.classList.add("is-tab-drop-target");
+    });
+
+    favoritesGrid.addEventListener("dragleave", () => {
+      favoritesGrid.classList.remove("is-tab-drop-target");
+    });
+
+    favoritesGrid.addEventListener("drop", async (event) => {
+      if (!Number.isInteger(draggingTabId)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      favoritesGrid.classList.remove("is-tab-drop-target");
+      const droppedTabId = draggingTabId;
+      draggingTabId = null;
+      await favoriteSnapshotTab(droppedTabId);
+    });
+
+    pinnedList.addEventListener("dragover", (event) => {
+      if (!Number.isInteger(draggingTabId)) {
+        return;
+      }
+
+      const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+      const overFolder = path.some((node) => node?.classList?.contains?.("bts-pinned-folder"));
+      if (overFolder) {
+        return;
+      }
+
+      event.preventDefault();
+      pinnedList.classList.add("is-tab-drop-target");
+    });
+
+    pinnedList.addEventListener("dragleave", () => {
+      pinnedList.classList.remove("is-tab-drop-target");
+    });
+
+    pinnedList.addEventListener("drop", async (event) => {
+      if (!Number.isInteger(draggingTabId)) {
+        return;
+      }
+
+      const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+      const overFolder = path.some((node) => node?.classList?.contains?.("bts-pinned-folder"));
+      if (overFolder) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      pinnedList.classList.remove("is-tab-drop-target");
+      const droppedTabId = draggingTabId;
+      draggingTabId = null;
+      await pinSnapshotTabToSidebar(droppedTabId);
+    });
+  }
+
   async function addSpace() {
     const index = sidebarData.spaces.length + 1;
     const newSpace = {
@@ -1144,11 +1339,25 @@
     contextMenuEl.setAttribute("aria-hidden", "true");
   }
 
+  function armInteractionSuppression(durationMs = 260) {
+    suppressPointerUntil = Math.max(suppressPointerUntil, performance.now() + durationMs);
+  }
+
+  function shouldSuppressInteraction(event) {
+    if (performance.now() >= suppressPointerUntil) {
+      return false;
+    }
+
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+    return !path.includes(contextMenuEl);
+  }
+
   function createContextMenuItem(label, onSelect, options = {}) {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "bts-context-menu-item";
     item.textContent = label;
+    const isDisabled = Boolean(options.disabled);
 
     if (options.destructive) {
       item.classList.add("is-destructive");
@@ -1156,6 +1365,11 @@
 
     if (options.secondary) {
       item.classList.add("is-secondary");
+    }
+
+    if (isDisabled) {
+      item.classList.add("is-disabled");
+      item.disabled = true;
     }
 
     item.addEventListener("pointerdown", (event) => {
@@ -1171,11 +1385,12 @@
     item.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      void Promise.resolve(onSelect())
-        .catch(() => {})
-        .finally(() => {
-          closeContextMenu();
-        });
+      if (isDisabled) {
+        return;
+      }
+      armInteractionSuppression();
+      closeContextMenu();
+      void Promise.resolve(onSelect()).catch(() => {});
     });
 
     return item;
@@ -1212,11 +1427,11 @@
       return String(a.title || "").localeCompare(String(b.title || ""));
     });
 
-    const canStoreUrl = isHttpUrl(tab.url) || Number.isInteger(tab.id);
-    if (canStoreUrl) {
-      const tabUrl = normalizeUrlKey(tab.url);
+    const tabUrl = normalizeUrlKey(tab.url);
+    const canStoreUrl = isHttpUrl(tabUrl);
 
-      if (tabUrl && isUrlInFavorites(tabUrl)) {
+    if (canStoreUrl) {
+      if (isUrlInFavorites(tabUrl)) {
         items.push(
           createContextMenuItem("Remove from favorites", async () => {
             await removeFavoriteByUrl(tabUrl);
@@ -1227,7 +1442,8 @@
         if (sidebarData.favorites.length >= MAX_FAVORITES) {
           items.push(
             createContextMenuItem(`Favorites full (${MAX_FAVORITES})`, async () => {}, {
-              secondary: true
+              secondary: true,
+              disabled: true
             })
           );
         } else {
@@ -1241,7 +1457,7 @@
         }
       }
 
-      if (tabUrl && isUrlPinnedInActiveSpace(tabUrl)) {
+      if (isUrlPinnedInActiveSpace(tabUrl)) {
         items.push(
           createContextMenuItem("Unpin from sidebar", async () => {
             await unpinUrlInActiveSpace(tabUrl);
@@ -1258,6 +1474,20 @@
         );
       }
 
+      items.push(createContextMenuSeparator());
+    } else {
+      items.push(
+        createContextMenuItem("Pin unavailable for this page", async () => {}, {
+          secondary: true,
+          disabled: true
+        })
+      );
+      items.push(
+        createContextMenuItem("Favorites unavailable for this page", async () => {}, {
+          secondary: true,
+          disabled: true
+        })
+      );
       items.push(createContextMenuSeparator());
     }
 
@@ -1743,6 +1973,30 @@
     }
   });
 
+  shadowRoot.addEventListener(
+    "pointerup",
+    (event) => {
+      if (!shouldSuppressInteraction(event)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    true
+  );
+
+  shadowRoot.addEventListener(
+    "click",
+    (event) => {
+      if (!shouldSuppressInteraction(event)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    true
+  );
+
   shadowRoot.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && contextMenuTabId !== null) {
       event.preventDefault();
@@ -1765,6 +2019,12 @@
   });
 
   shadowRoot.addEventListener("pointerdown", (event) => {
+    if (shouldSuppressInteraction(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     if (contextMenuTabId === null) {
       return;
     }
@@ -1787,6 +2047,7 @@
   });
 
   handleResize();
+  setupArcDropZones();
   updateToggleButton();
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
