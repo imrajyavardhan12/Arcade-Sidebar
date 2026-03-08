@@ -22,6 +22,7 @@ jobs:
           node --test tests/drag-state.test.js
           node --test tests/sidebar-data.test.js
           node --test tests/keyboard-nav.test.js
+          node --test tests/render-perf.test.js
           node --check background.js
           node --check content.js
           node --check sidebar/search.js
@@ -30,4 +31,5 @@ jobs:
           node --check sidebar/sidebar-data.js
           node --check sidebar/drag-state.js
           node --check sidebar/keyboard-nav.js
+          node --check sidebar/render-perf.js
           node -e "const fs=require('fs'); JSON.parse(fs.readFileSync('manifest.json','utf8'));"

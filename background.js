@@ -7,6 +7,7 @@ const INJECT_FILES = [
   "sidebar/sidebar-data.js",
   "sidebar/drag-state.js",
   "sidebar/keyboard-nav.js",
+  "sidebar/render-perf.js",
   "content.js"
 ];
 const broadcastTimers = new Map();

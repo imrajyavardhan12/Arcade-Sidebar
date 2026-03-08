@@ -14,6 +14,7 @@
   const sidebarDataModule = globalScope.BraveSidebarData;
   const dragStateModule = globalScope.BraveSidebarDragState;
   const keyboardNavModule = globalScope.BraveSidebarKeyboardNav;
+  const renderPerfModule = globalScope.BraveSidebarRenderPerf;
 
   if (
     !searchModule ||
@@ -21,7 +22,8 @@
     !tabsModule ||
     !sidebarDataModule ||
     !dragStateModule ||
-    !keyboardNavModule
+    !keyboardNavModule ||
+    !renderPerfModule
   ) {
     return;
   }
@@ -62,11 +64,20 @@
       [DEFAULT_SPACE.id]: []
     }
   };
+  let sidebarDataVersion = 0;
+  let renderedArcDataVersion = -1;
+  let sidebarDataSignature = "";
   let latestSnapshot = {
     windowId: null,
     tabs: [],
     groups: []
   };
+
+  const renderCoalescer = renderPerfModule.createRenderCoalescer(
+    (run) => globalScope.requestAnimationFrame(run),
+    (frameHandle) => globalScope.cancelAnimationFrame(frameHandle)
+  );
+  sidebarDataSignature = getSidebarDataSignature(sidebarData);
 
   const host = document.createElement("div");
   host.id = "brave-tab-sidebar-host";
@@ -276,6 +287,19 @@
       });
   }
 
+  function getSidebarDataSignature(value) {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+
+  function markSidebarDataChanged() {
+    sidebarDataVersion += 1;
+    sidebarDataSignature = getSidebarDataSignature(sidebarData);
+  }
+
   function createDefaultSidebarData() {
     return sidebarDataModule.createDefaultSidebarData(DEFAULT_SPACE);
   }
@@ -353,12 +377,14 @@
   }
 
   async function persistSidebarData() {
+    markSidebarDataChanged();
     await storageSet(SIDEBAR_DATA_KEY, sidebarData);
   }
 
   async function hydrateSidebarData() {
     const stored = await storageGet(SIDEBAR_DATA_KEY);
     sidebarData = sanitizeSidebarData(stored);
+    markSidebarDataChanged();
   }
 
   function createSavedItemFromTab(tab) {
@@ -1227,6 +1253,7 @@
     renderFavorites();
     renderPinnedList();
     renderSpacesDock();
+    renderedArcDataVersion = sidebarDataVersion;
   }
 
   function clearDragDropVisualState() {
@@ -1919,10 +1946,13 @@
     });
   }
 
-  function renderTabList() {
+  function performRenderTabList() {
     const visibleTabs = getVisibleTabs();
     const hadTabRowFocus = shadowRoot.activeElement?.classList?.contains?.("bts-tab-row");
-    renderArcSections();
+
+    if (renderPerfModule.shouldRenderArcSections(sidebarDataVersion, renderedArcDataVersion)) {
+      renderArcSections();
+    }
 
     const visibleTabIdList = getVisibleTabIds(visibleTabs);
     const visibleTabIds = new Set(visibleTabIdList);
@@ -2014,6 +2044,18 @@
         closeContextMenu();
       }
     }
+  }
+
+  function renderTabList() {
+    renderCoalescer.flush(() => {
+      performRenderTabList();
+    });
+  }
+
+  function scheduleRenderTabList() {
+    renderCoalescer.schedule(() => {
+      performRenderTabList();
+    });
   }
 
   function syncSnapshot(payload) {
@@ -2316,7 +2358,7 @@
       }
 
       syncSnapshot(payload);
-      renderTabList();
+      scheduleRenderTabList();
       return;
     }
 
@@ -2348,8 +2390,15 @@
         return;
       }
 
-      sidebarData = sanitizeSidebarData(changes[SIDEBAR_DATA_KEY].newValue);
-      renderTabList();
+      const nextSidebarData = sanitizeSidebarData(changes[SIDEBAR_DATA_KEY].newValue);
+      const nextSignature = getSidebarDataSignature(nextSidebarData);
+      if (nextSignature === sidebarDataSignature) {
+        return;
+      }
+
+      sidebarData = nextSidebarData;
+      markSidebarDataChanged();
+      scheduleRenderTabList();
     });
   }
 
