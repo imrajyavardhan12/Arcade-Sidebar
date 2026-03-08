@@ -26,6 +26,13 @@
         "mac": "Command+Shift+Y"
       },
       "description": "Toggle tab sidebar"
+    },
+    "toggle-command-palette": {
+      "suggested_key": {
+        "default": "Ctrl+K",
+        "mac": "Command+K"
+      },
+      "description": "Toggle command palette"
     }
   },
   "content_scripts": [
@@ -42,6 +49,7 @@
         "sidebar/drag-state.js",
         "sidebar/keyboard-nav.js",
         "sidebar/render-perf.js",
+        "sidebar/quick-switcher.js",
         "content.js"
       ],
       "run_at": "document_idle"

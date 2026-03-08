@@ -1,5 +1,6 @@
 const WINDOW_STATE_PREFIX = "bts_window_state_";
 const TOGGLE_COMMAND = "toggle-sidebar";
+const TOGGLE_COMMAND_PALETTE = "toggle-command-palette";
 const INJECT_FILES = [
   "sidebar/search.js",
   "sidebar/groups.js",
@@ -8,6 +9,7 @@ const INJECT_FILES = [
   "sidebar/drag-state.js",
   "sidebar/keyboard-nav.js",
   "sidebar/render-perf.js",
+  "sidebar/quick-switcher.js",
   "content.js"
 ];
 const broadcastTimers = new Map();
@@ -523,12 +525,37 @@ async function toggleWindowOpen(windowId, activeTabId) {
 }
 
 async function toggleLastFocusedWindow() {
-  const tabs = await queryTabs({ active: true, lastFocusedWindow: true });
-  const activeTab = tabs[0];
+  const activeTab = await getLastFocusedActiveTab();
   if (!activeTab || !Number.isInteger(activeTab.windowId)) {
     return;
   }
   await toggleWindowOpen(activeTab.windowId, activeTab.id);
+}
+
+async function getLastFocusedActiveTab() {
+  const tabs = await queryTabs({ active: true, lastFocusedWindow: true });
+  return tabs[0] || null;
+}
+
+async function toggleLastFocusedWindowCommandPalette() {
+  const activeTab = await getLastFocusedActiveTab();
+  if (
+    !activeTab ||
+    !Number.isInteger(activeTab.id) ||
+    !Number.isInteger(activeTab.windowId)
+  ) {
+    return;
+  }
+
+  const injected = await ensureTabInjected(activeTab);
+  if (!injected) {
+    return;
+  }
+
+  await sendMessageToTab(activeTab.id, {
+    type: "sidebar:toggleCommandPalette",
+    payload: { windowId: activeTab.windowId }
+  });
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -544,10 +571,14 @@ chrome.action.onClicked.addListener(async (tab) => {
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
-  if (command !== TOGGLE_COMMAND) {
+  if (command === TOGGLE_COMMAND) {
+    await toggleLastFocusedWindow();
     return;
   }
-  await toggleLastFocusedWindow();
+
+  if (command === TOGGLE_COMMAND_PALETTE) {
+    await toggleLastFocusedWindowCommandPalette();
+  }
 });
 
 chrome.tabs.onCreated.addListener((tab) => {

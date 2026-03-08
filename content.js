@@ -15,6 +15,7 @@
   const dragStateModule = globalScope.BraveSidebarDragState;
   const keyboardNavModule = globalScope.BraveSidebarKeyboardNav;
   const renderPerfModule = globalScope.BraveSidebarRenderPerf;
+  const quickSwitcherModule = globalScope.BraveSidebarQuickSwitcher;
 
   if (
     !searchModule ||
@@ -23,7 +24,8 @@
     !sidebarDataModule ||
     !dragStateModule ||
     !keyboardNavModule ||
-    !renderPerfModule
+    !renderPerfModule ||
+    !quickSwitcherModule
   ) {
     return;
   }
@@ -51,6 +53,10 @@
   let previousVisibleTabIds = new Set();
   let focusedTabId = null;
   let contextMenuTabId = null;
+  let commandPaletteOpen = false;
+  let commandPaletteQuery = "";
+  let commandPaletteItems = [];
+  let commandPaletteFocusedIndex = -1;
   let pinnedDragContext = null;
   let favoriteDragContext = null;
   let draggingTabId = null;
@@ -144,6 +150,17 @@
   contextMenuEl.setAttribute("role", "menu");
   contextMenuEl.setAttribute("aria-hidden", "true");
 
+  const commandPaletteEl = document.createElement("div");
+  commandPaletteEl.className = "bts-command-palette";
+  commandPaletteEl.setAttribute("aria-hidden", "true");
+  commandPaletteEl.innerHTML = `
+    <div class="bts-command-backdrop"></div>
+    <section class="bts-command-panel" role="dialog" aria-label="Command palette">
+      <input id="bts-command-input" class="bts-command-input" type="search" placeholder="Search tabs, pinned, favorites, actions" autocomplete="off" />
+      <div id="bts-command-list" class="bts-command-list" role="listbox" aria-label="Command results"></div>
+    </section>
+  `;
+
   const sidebarEl = document.createElement("aside");
   sidebarEl.className = "bts-sidebar";
   sidebarEl.style.cssText = `position: fixed; inset: 0 auto 0 0; width: ${DEFAULT_WIDTH}px; height: 100vh; transform: translateX(-100%); transition: none; pointer-events: auto;`;
@@ -177,7 +194,7 @@
     <div id="bts-resize-handle" class="bts-resize-handle" title="Resize sidebar" role="separator" aria-orientation="vertical"></div>
   `;
 
-  shadowRoot.append(fallbackStyleEl, linkEl, overlayEl, sidebarEl, contextMenuEl);
+  shadowRoot.append(fallbackStyleEl, linkEl, overlayEl, sidebarEl, contextMenuEl, commandPaletteEl);
   document.documentElement.append(host);
 
   const toggleButton = sidebarEl.querySelector("#bts-toggle-btn");
@@ -193,6 +210,9 @@
   const addSpaceButton = sidebarEl.querySelector("#bts-add-space-btn");
   const tabList = sidebarEl.querySelector("#bts-tab-list");
   const resizeHandle = sidebarEl.querySelector("#bts-resize-handle");
+  const commandBackdrop = commandPaletteEl.querySelector(".bts-command-backdrop");
+  const commandInput = commandPaletteEl.querySelector("#bts-command-input");
+  const commandList = commandPaletteEl.querySelector("#bts-command-list");
 
   function storageGet(key) {
     if (!runtimeContextAlive) {
@@ -1419,6 +1439,377 @@
     contextMenuEl.setAttribute("aria-hidden", "true");
   }
 
+  function getActiveSnapshotTab() {
+    return latestSnapshot.tabs.find((tab) => tab.active) || null;
+  }
+
+  function getPinnedLinkEntriesForPalette() {
+    const entries = [];
+    for (const node of getActiveSpacePinnedNodes()) {
+      if (node?.type === "link") {
+        entries.push({
+          node,
+          folderTitle: ""
+        });
+        continue;
+      }
+
+      if (node?.type === "folder" && Array.isArray(node.children)) {
+        for (const child of node.children) {
+          entries.push({
+            node: child,
+            folderTitle: node.title || "Folder"
+          });
+        }
+      }
+    }
+
+    return entries;
+  }
+
+  function createCommandPaletteCandidates() {
+    const candidates = [];
+    const activeTab = getActiveSnapshotTab();
+
+    candidates.push({
+      id: "action:new-tab",
+      type: "action",
+      command: "new-tab",
+      label: "New Tab",
+      subtitle: "Create a new tab",
+      keywords: ["create", "tab", "new"]
+    });
+
+    candidates.push({
+      id: "action:focus-search",
+      type: "action",
+      command: "focus-search",
+      label: "Focus Sidebar Search",
+      subtitle: "Jump to the sidebar search input",
+      keywords: ["search", "find", "sidebar"]
+    });
+
+    candidates.push({
+      id: "action:toggle-sidebar",
+      type: "action",
+      command: "toggle-sidebar",
+      label: sidebarOpen ? "Hide Sidebar" : "Show Sidebar",
+      subtitle: "Toggle sidebar visibility",
+      keywords: ["toggle", "show", "hide", "sidebar"]
+    });
+
+    if (activeTab?.id) {
+      candidates.push({
+        id: "action:close-active-tab",
+        type: "action",
+        command: "close-active-tab",
+        tabId: activeTab.id,
+        label: "Close Active Tab",
+        subtitle: activeTab.title || activeTab.url || "Close tab",
+        keywords: ["close", "active", "tab"]
+      });
+
+      candidates.push({
+        id: "action:toggle-pin-active-tab",
+        type: "action",
+        command: "toggle-pin-active-tab",
+        tabId: activeTab.id,
+        nextPinned: !activeTab.pinned,
+        label: activeTab.pinned ? "Unpin Active Tab" : "Pin Active Tab",
+        subtitle: activeTab.title || activeTab.url || "Pin state",
+        keywords: ["pin", "unpin", "active", "tab"]
+      });
+    }
+
+    for (const tab of latestSnapshot.tabs) {
+      if (!Number.isInteger(tab?.id)) {
+        continue;
+      }
+
+      candidates.push({
+        id: `tab:${tab.id}`,
+        type: "tab",
+        command: "activate-tab",
+        tabId: tab.id,
+        label: tab.title || "Untitled tab",
+        subtitle: tab.url || "Open tab",
+        keywords: ["tab", tab.url, tab.title]
+      });
+    }
+
+    for (const favorite of sidebarData.favorites) {
+      if (!favorite?.url) {
+        continue;
+      }
+
+      candidates.push({
+        id: `favorite:${favorite.id}`,
+        type: "favorite",
+        command: "open-url",
+        url: favorite.url,
+        label: favorite.title || favorite.url,
+        subtitle: `Favorite • ${favorite.url}`,
+        keywords: ["favorite", favorite.title, favorite.url]
+      });
+    }
+
+    for (const entry of getPinnedLinkEntriesForPalette()) {
+      const linkNode = entry.node;
+      if (!linkNode?.url) {
+        continue;
+      }
+
+      candidates.push({
+        id: `pinned:${linkNode.id}`,
+        type: "pinned",
+        command: "open-url",
+        url: linkNode.url,
+        label: linkNode.title || linkNode.url,
+        subtitle: entry.folderTitle
+          ? `Pinned • ${entry.folderTitle} • ${linkNode.url}`
+          : `Pinned • ${linkNode.url}`,
+        keywords: ["pinned", entry.folderTitle, linkNode.title, linkNode.url]
+      });
+    }
+
+    return candidates;
+  }
+
+  function setCommandPaletteFocusedIndex(nextIndex) {
+    if (commandPaletteItems.length === 0) {
+      commandPaletteFocusedIndex = -1;
+      return;
+    }
+
+    const clamped = Math.max(0, Math.min(commandPaletteItems.length - 1, nextIndex));
+    commandPaletteFocusedIndex = clamped;
+
+    const rows = commandList.querySelectorAll(".bts-command-item");
+    for (const row of rows) {
+      const rowIndex = Number(row.dataset.commandIndex);
+      const isActive = rowIndex === commandPaletteFocusedIndex;
+      row.classList.toggle("is-active", isActive);
+      row.setAttribute("aria-selected", isActive ? "true" : "false");
+      if (isActive) {
+        row.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }
+
+  function renderCommandPaletteList() {
+    commandList.replaceChildren();
+
+    if (!commandPaletteItems.length) {
+      const empty = document.createElement("div");
+      empty.className = "bts-command-empty";
+      empty.textContent = "No results";
+      commandList.append(empty);
+      return;
+    }
+
+    for (let index = 0; index < commandPaletteItems.length; index += 1) {
+      const item = commandPaletteItems[index];
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "bts-command-item";
+      row.dataset.commandIndex = String(index);
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", index === commandPaletteFocusedIndex ? "true" : "false");
+      if (index === commandPaletteFocusedIndex) {
+        row.classList.add("is-active");
+      }
+
+      const label = document.createElement("span");
+      label.className = "bts-command-label";
+      label.textContent = item.label;
+
+      const subtitle = document.createElement("span");
+      subtitle.className = "bts-command-subtitle";
+      subtitle.textContent = item.subtitle || "";
+
+      row.append(label, subtitle);
+
+      row.addEventListener("mouseenter", () => {
+        setCommandPaletteFocusedIndex(index);
+      });
+
+      row.addEventListener("click", () => {
+        void executeCommandPaletteItem(item);
+      });
+
+      commandList.append(row);
+    }
+  }
+
+  function refreshCommandPaletteItems(options = {}) {
+    const { preserveSelection = false } = options;
+    const previousSelectedId =
+      preserveSelection && commandPaletteFocusedIndex >= 0
+        ? commandPaletteItems[commandPaletteFocusedIndex]?.id
+        : null;
+
+    const candidates = createCommandPaletteCandidates();
+    commandPaletteItems = quickSwitcherModule.rankItems(candidates, commandPaletteQuery, 60);
+
+    if (!commandPaletteItems.length) {
+      commandPaletteFocusedIndex = -1;
+    } else if (previousSelectedId) {
+      const nextIndex = commandPaletteItems.findIndex((item) => item.id === previousSelectedId);
+      commandPaletteFocusedIndex = nextIndex >= 0 ? nextIndex : 0;
+    } else if (commandPaletteFocusedIndex < 0 || commandPaletteFocusedIndex >= commandPaletteItems.length) {
+      commandPaletteFocusedIndex = 0;
+    }
+
+    renderCommandPaletteList();
+  }
+
+  async function executeCommandPaletteItem(item) {
+    if (!item || typeof item !== "object") {
+      return;
+    }
+
+    closeCommandPalette({ restoreTabFocus: false });
+
+    if (item.command === "new-tab") {
+      await sendMessage({
+        type: "sidebar:createTab",
+        payload: {
+          windowId
+        }
+      });
+      return;
+    }
+
+    if (item.command === "focus-search") {
+      searchInput.focus();
+      searchInput.select();
+      return;
+    }
+
+    if (item.command === "toggle-sidebar") {
+      setOpen(!sidebarOpen, { persist: true, broadcast: true, animate: true });
+      return;
+    }
+
+    if (item.command === "close-active-tab" && Number.isInteger(item.tabId)) {
+      await sendMessage({
+        type: "sidebar:closeTab",
+        payload: { tabId: item.tabId }
+      });
+      return;
+    }
+
+    if (item.command === "toggle-pin-active-tab" && Number.isInteger(item.tabId)) {
+      await sendMessage({
+        type: "sidebar:updateTab",
+        payload: {
+          tabId: item.tabId,
+          update: { pinned: Boolean(item.nextPinned) }
+        }
+      });
+      return;
+    }
+
+    if (item.command === "activate-tab" && Number.isInteger(item.tabId)) {
+      focusedTabId = item.tabId;
+      await sendMessage({
+        type: "sidebar:activateTab",
+        payload: { tabId: item.tabId }
+      });
+      return;
+    }
+
+    if (item.command === "open-url" && typeof item.url === "string") {
+      await openOrFocusUrl(item.url);
+    }
+  }
+
+  function openCommandPalette() {
+    if (commandPaletteOpen) {
+      return;
+    }
+
+    closeContextMenu();
+
+    commandPaletteOpen = true;
+    commandPaletteQuery = "";
+    commandInput.value = "";
+
+    commandPaletteEl.classList.add("is-open");
+    commandPaletteEl.setAttribute("aria-hidden", "false");
+    refreshCommandPaletteItems({ preserveSelection: false });
+
+    requestAnimationFrame(() => {
+      commandInput.focus();
+      commandInput.select();
+    });
+  }
+
+  function closeCommandPalette(options = {}) {
+    const { restoreTabFocus = true } = options;
+    if (!commandPaletteOpen) {
+      return;
+    }
+
+    commandPaletteOpen = false;
+    commandPaletteQuery = "";
+    commandPaletteItems = [];
+    commandPaletteFocusedIndex = -1;
+
+    commandPaletteEl.classList.remove("is-open");
+    commandPaletteEl.setAttribute("aria-hidden", "true");
+    commandInput.value = "";
+    commandList.replaceChildren();
+
+    if (restoreTabFocus) {
+      focusRenderedTabRow(focusedTabId, { preventScroll: true });
+    }
+  }
+
+  function toggleCommandPalette() {
+    if (commandPaletteOpen) {
+      closeCommandPalette({ restoreTabFocus: true });
+      return;
+    }
+
+    if (!sidebarOpen) {
+      setOpen(true, { persist: true, broadcast: true, animate: true });
+    }
+
+    openCommandPalette();
+  }
+
+  function isCommandPaletteShortcut(event) {
+    if (!event || typeof event !== "object") {
+      return false;
+    }
+
+    if (event.altKey || event.shiftKey) {
+      return false;
+    }
+
+    if (!event.metaKey && !event.ctrlKey) {
+      return false;
+    }
+
+    return String(event.key || "").toLowerCase() === "k";
+  }
+
+  function handleCommandPaletteShortcut(event) {
+    if (!isCommandPaletteShortcut(event)) {
+      return false;
+    }
+
+    if (!commandPaletteOpen && isEditableTarget(event.target)) {
+      return false;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    toggleCommandPalette();
+    return true;
+  }
+
   function armInteractionSuppression(durationMs = 260) {
     suppressPointerUntil = Math.max(suppressPointerUntil, performance.now() + durationMs);
   }
@@ -1497,6 +1888,8 @@
   }
 
   function openContextMenuForTab(tab, x, y) {
+    closeCommandPalette({ restoreTabFocus: false });
+
     if (!tab) {
       closeContextMenu();
       return;
@@ -1706,6 +2099,7 @@
     const { persist = true } = options;
     sidebarWidth = clampWidth(nextWidth);
     sidebarEl.style.setProperty("--bts-sidebar-width", `${sidebarWidth}px`);
+    commandPaletteEl.style.setProperty("--bts-sidebar-width", `${sidebarWidth}px`);
     if (persist) {
       void persistWindowState();
     }
@@ -1759,6 +2153,7 @@
       sidebarEl.style.transform = sidebarOpen ? "translateX(0)" : "translateX(-100%)";
       if (!sidebarOpen) {
         closeContextMenu();
+        closeCommandPalette({ restoreTabFocus: false });
       }
       animationState = sidebarOpen ? "open" : "closed";
       updateToggleButton();
@@ -1781,6 +2176,7 @@
 
     if (!sidebarOpen) {
       closeContextMenu();
+      closeCommandPalette({ restoreTabFocus: false });
     }
 
     updateToggleButton();
@@ -2044,6 +2440,10 @@
         closeContextMenu();
       }
     }
+
+    if (commandPaletteOpen) {
+      refreshCommandPaletteItems({ preserveSelection: true });
+    }
   }
 
   function renderTabList() {
@@ -2213,6 +2613,54 @@
     }
   });
 
+  commandBackdrop.addEventListener("click", () => {
+    closeCommandPalette({ restoreTabFocus: true });
+  });
+
+  commandInput.addEventListener("input", () => {
+    commandPaletteQuery = commandInput.value || "";
+    refreshCommandPaletteItems({ preserveSelection: false });
+  });
+
+  commandInput.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      const nextIndex = commandPaletteFocusedIndex < 0 ? 0 : commandPaletteFocusedIndex + delta;
+      setCommandPaletteFocusedIndex(nextIndex);
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const selected = commandPaletteItems[commandPaletteFocusedIndex];
+      if (selected) {
+        void executeCommandPaletteItem(selected);
+      }
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeCommandPalette({ restoreTabFocus: true });
+    }
+  });
+
+  commandList.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
+
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.defaultPrevented) {
+        return;
+      }
+      handleCommandPaletteShortcut(event);
+    },
+    true
+  );
+
   shadowRoot.addEventListener(
     "pointerup",
     (event) => {
@@ -2238,6 +2686,43 @@
   );
 
   shadowRoot.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented) {
+      return;
+    }
+
+    if (handleCommandPaletteShortcut(event)) {
+      return;
+    }
+
+    const metaOrCtrl = event.metaKey || event.ctrlKey;
+    const normalizedKey = String(event.key).toLowerCase();
+
+    if (commandPaletteOpen) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeCommandPalette({ restoreTabFocus: true });
+        return;
+      }
+
+      if (event.target !== commandInput && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const nextIndex = commandPaletteFocusedIndex < 0 ? 0 : commandPaletteFocusedIndex + delta;
+        setCommandPaletteFocusedIndex(nextIndex);
+        return;
+      }
+
+      if (event.target !== commandInput && event.key === "Enter") {
+        event.preventDefault();
+        const selected = commandPaletteItems[commandPaletteFocusedIndex];
+        if (selected) {
+          void executeCommandPaletteItem(selected);
+        }
+      }
+
+      return;
+    }
+
     if (event.key === "Escape" && contextMenuTabId !== null) {
       event.preventDefault();
       closeContextMenu();
@@ -2245,8 +2730,7 @@
       return;
     }
 
-    const metaOrCtrl = event.metaKey || event.ctrlKey;
-    if (metaOrCtrl && String(event.key).toLowerCase() === "f") {
+    if (metaOrCtrl && normalizedKey === "f") {
       event.preventDefault();
       searchInput.focus();
       searchInput.select();
@@ -2377,6 +2861,23 @@
         broadcast: false,
         animate: true
       });
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (message.type === "sidebar:toggleCommandPalette") {
+      const targetWindowId = message.payload?.windowId;
+      if (
+        Number.isInteger(windowId) &&
+        Number.isInteger(targetWindowId) &&
+        targetWindowId !== windowId
+      ) {
+        sendResponse({ ok: false, error: "WINDOW_MISMATCH" });
+        return;
+      }
+
+      toggleCommandPalette();
+      sendResponse({ ok: true });
     }
   });
 
