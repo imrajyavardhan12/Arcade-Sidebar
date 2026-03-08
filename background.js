@@ -8,6 +8,9 @@ const INJECT_FILES = [
 ];
 const broadcastTimers = new Map();
 const injectionTasks = new Map();
+const faviconCache = new Map();
+const faviconInflight = new Map();
+const MAX_FAVICON_CACHE_ENTRIES = 512;
 
 function storageGet(key) {
   return new Promise((resolve) => {
@@ -31,6 +34,118 @@ function queryTabs(queryInfo) {
       resolve(tabs || []);
     });
   });
+}
+
+function isSafeInlineImageUrl(url) {
+  return /^(data:|blob:|chrome-extension:)/i.test(String(url || ""));
+}
+
+function isHttpUrl(url) {
+  return /^https?:\/\//i.test(String(url || ""));
+}
+
+function readCachedFavicon(url) {
+  if (!faviconCache.has(url)) {
+    return undefined;
+  }
+
+  const value = faviconCache.get(url);
+  faviconCache.delete(url);
+  faviconCache.set(url, value);
+  return value;
+}
+
+function writeCachedFavicon(url, dataUrl) {
+  if (faviconCache.has(url)) {
+    faviconCache.delete(url);
+  }
+  faviconCache.set(url, dataUrl);
+
+  if (faviconCache.size > MAX_FAVICON_CACHE_ENTRIES) {
+    const oldestKey = faviconCache.keys().next().value;
+    if (oldestKey) {
+      faviconCache.delete(oldestKey);
+    }
+  }
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+async function fetchImageAsDataUrl(url) {
+  const response = await fetch(url, {
+    cache: "force-cache",
+    credentials: "omit"
+  });
+
+  if (!response.ok) {
+    throw new Error(`FAVICON_FETCH_FAILED_${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "image/png";
+  const buffer = await response.arrayBuffer();
+  if (!buffer.byteLength) {
+    throw new Error("FAVICON_EMPTY");
+  }
+
+  const base64 = arrayBufferToBase64(buffer);
+  return `data:${contentType};base64,${base64}`;
+}
+
+async function resolveFaviconUrl(rawUrl) {
+  const url = String(rawUrl || "").trim();
+  if (!url) {
+    return "";
+  }
+
+  if (isSafeInlineImageUrl(url)) {
+    return url;
+  }
+
+  if (!isHttpUrl(url)) {
+    return "";
+  }
+
+  const cached = readCachedFavicon(url);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  if (faviconInflight.has(url)) {
+    return faviconInflight.get(url);
+  }
+
+  const task = (async () => {
+    try {
+      const dataUrl = await fetchImageAsDataUrl(url);
+      writeCachedFavicon(url, dataUrl);
+      return dataUrl;
+    } catch {
+      writeCachedFavicon(url, "");
+      return "";
+    } finally {
+      faviconInflight.delete(url);
+    }
+  })();
+
+  faviconInflight.set(url, task);
+  return task;
+}
+
+async function serializeTabWithResolvedFavicon(tab) {
+  const serialized = serializeTab(tab);
+  serialized.favIconUrl = await resolveFaviconUrl(tab?.favIconUrl);
+  return serialized;
 }
 
 function getTab(tabId) {
@@ -293,12 +408,16 @@ async function buildWindowSnapshot(windowId) {
     queryGroups(windowId)
   ]);
 
-  return {
-    windowId,
-    tabs: tabs
+  const serializedTabs = await Promise.all(
+    tabs
       .slice()
       .sort((a, b) => a.index - b.index)
-      .map(serializeTab),
+      .map((tab) => serializeTabWithResolvedFavicon(tab))
+  );
+
+  return {
+    windowId,
+    tabs: serializedTabs,
     groups: groups.map(serializeGroup)
   };
 }
@@ -481,7 +600,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       const tab = await getTab(tabId);
-      sendResponse({ ok: true, tab: serializeTab(tab) });
+      const serializedTab = await serializeTabWithResolvedFavicon(tab);
+      sendResponse({ ok: true, tab: serializedTab });
       return;
     }
 

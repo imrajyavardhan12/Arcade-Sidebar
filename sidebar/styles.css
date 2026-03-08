@@ -177,6 +177,12 @@
   gap: 8px;
 }
 
+.bts-favorites-grid.is-tab-drop-target {
+  outline: 1px dashed var(--bts-sidebar-accent);
+  outline-offset: 4px;
+  border-radius: 10px;
+}
+
 .bts-favorite-btn,
 .bts-favorite-slot {
   width: 100%;
@@ -260,6 +266,12 @@
   flex-direction: column;
   gap: 4px;
   padding: 0 6px 8px;
+}
+
+.bts-pinned-list.is-tab-drop-target {
+  outline: 1px dashed var(--bts-sidebar-accent);
+  outline-offset: -2px;
+  border-radius: 8px;
 }
 
 .bts-pinned-empty {
