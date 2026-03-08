@@ -1357,6 +1357,7 @@
     item.type = "button";
     item.className = "bts-context-menu-item";
     item.textContent = label;
+    const isDisabled = Boolean(options.disabled);
 
     if (options.destructive) {
       item.classList.add("is-destructive");
@@ -1364,6 +1365,11 @@
 
     if (options.secondary) {
       item.classList.add("is-secondary");
+    }
+
+    if (isDisabled) {
+      item.classList.add("is-disabled");
+      item.disabled = true;
     }
 
     item.addEventListener("pointerdown", (event) => {
@@ -1379,6 +1385,9 @@
     item.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (isDisabled) {
+        return;
+      }
       armInteractionSuppression();
       closeContextMenu();
       void Promise.resolve(onSelect()).catch(() => {});
@@ -1418,11 +1427,11 @@
       return String(a.title || "").localeCompare(String(b.title || ""));
     });
 
-    const canStoreUrl = isHttpUrl(tab.url) || Number.isInteger(tab.id);
-    if (canStoreUrl) {
-      const tabUrl = normalizeUrlKey(tab.url);
+    const tabUrl = normalizeUrlKey(tab.url);
+    const canStoreUrl = isHttpUrl(tabUrl);
 
-      if (tabUrl && isUrlInFavorites(tabUrl)) {
+    if (canStoreUrl) {
+      if (isUrlInFavorites(tabUrl)) {
         items.push(
           createContextMenuItem("Remove from favorites", async () => {
             await removeFavoriteByUrl(tabUrl);
@@ -1433,7 +1442,8 @@
         if (sidebarData.favorites.length >= MAX_FAVORITES) {
           items.push(
             createContextMenuItem(`Favorites full (${MAX_FAVORITES})`, async () => {}, {
-              secondary: true
+              secondary: true,
+              disabled: true
             })
           );
         } else {
@@ -1447,7 +1457,7 @@
         }
       }
 
-      if (tabUrl && isUrlPinnedInActiveSpace(tabUrl)) {
+      if (isUrlPinnedInActiveSpace(tabUrl)) {
         items.push(
           createContextMenuItem("Unpin from sidebar", async () => {
             await unpinUrlInActiveSpace(tabUrl);
@@ -1464,6 +1474,20 @@
         );
       }
 
+      items.push(createContextMenuSeparator());
+    } else {
+      items.push(
+        createContextMenuItem("Pin unavailable for this page", async () => {}, {
+          secondary: true,
+          disabled: true
+        })
+      );
+      items.push(
+        createContextMenuItem("Favorites unavailable for this page", async () => {}, {
+          secondary: true,
+          disabled: true
+        })
+      );
       items.push(createContextMenuSeparator());
     }
 

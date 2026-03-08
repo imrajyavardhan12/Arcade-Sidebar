@@ -11,6 +11,8 @@ const injectionTasks = new Map();
 const faviconCache = new Map();
 const faviconInflight = new Map();
 const MAX_FAVICON_CACHE_ENTRIES = 512;
+const FAVICON_SUCCESS_TTL_MS = 24 * 60 * 60 * 1000;
+const FAVICON_FAILURE_TTL_MS = 2 * 60 * 1000;
 
 function storageGet(key) {
   return new Promise((resolve) => {
@@ -49,17 +51,26 @@ function readCachedFavicon(url) {
     return undefined;
   }
 
-  const value = faviconCache.get(url);
+  const entry = faviconCache.get(url);
+  if (!entry || Date.now() > entry.expiresAt) {
+    faviconCache.delete(url);
+    return undefined;
+  }
+
   faviconCache.delete(url);
-  faviconCache.set(url, value);
-  return value;
+  faviconCache.set(url, entry);
+  return entry.dataUrl;
 }
 
-function writeCachedFavicon(url, dataUrl) {
+function writeCachedFavicon(url, dataUrl, ttlMs) {
   if (faviconCache.has(url)) {
     faviconCache.delete(url);
   }
-  faviconCache.set(url, dataUrl);
+
+  faviconCache.set(url, {
+    dataUrl,
+    expiresAt: Date.now() + Math.max(1, ttlMs)
+  });
 
   if (faviconCache.size > MAX_FAVICON_CACHE_ENTRIES) {
     const oldestKey = faviconCache.keys().next().value;
@@ -102,7 +113,7 @@ async function fetchImageAsDataUrl(url) {
   return `data:${contentType};base64,${base64}`;
 }
 
-async function resolveFaviconUrl(rawUrl) {
+async function resolveFaviconUrl(rawUrl, windowId) {
   const url = String(rawUrl || "").trim();
   if (!url) {
     return "";
@@ -128,10 +139,13 @@ async function resolveFaviconUrl(rawUrl) {
   const task = (async () => {
     try {
       const dataUrl = await fetchImageAsDataUrl(url);
-      writeCachedFavicon(url, dataUrl);
+      writeCachedFavicon(url, dataUrl, FAVICON_SUCCESS_TTL_MS);
+      if (Number.isInteger(windowId)) {
+        scheduleWindowBroadcast(windowId);
+      }
       return dataUrl;
     } catch {
-      writeCachedFavicon(url, "");
+      writeCachedFavicon(url, "", FAVICON_FAILURE_TTL_MS);
       return "";
     } finally {
       faviconInflight.delete(url);
@@ -142,9 +156,38 @@ async function resolveFaviconUrl(rawUrl) {
   return task;
 }
 
+function getImmediateFaviconUrl(rawUrl, windowId) {
+  const url = String(rawUrl || "").trim();
+  if (!url) {
+    return "";
+  }
+
+  if (isSafeInlineImageUrl(url)) {
+    return url;
+  }
+
+  if (!isHttpUrl(url)) {
+    return "";
+  }
+
+  const cached = readCachedFavicon(url);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  void resolveFaviconUrl(url, windowId);
+  return "";
+}
+
 async function serializeTabWithResolvedFavicon(tab) {
   const serialized = serializeTab(tab);
-  serialized.favIconUrl = await resolveFaviconUrl(tab?.favIconUrl);
+  serialized.favIconUrl = await resolveFaviconUrl(tab?.favIconUrl, tab?.windowId);
+  return serialized;
+}
+
+function serializeTabForSnapshot(tab, windowId) {
+  const serialized = serializeTab(tab);
+  serialized.favIconUrl = getImmediateFaviconUrl(tab?.favIconUrl, windowId);
   return serialized;
 }
 
@@ -408,16 +451,12 @@ async function buildWindowSnapshot(windowId) {
     queryGroups(windowId)
   ]);
 
-  const serializedTabs = await Promise.all(
-    tabs
-      .slice()
-      .sort((a, b) => a.index - b.index)
-      .map((tab) => serializeTabWithResolvedFavicon(tab))
-  );
-
   return {
     windowId,
-    tabs: serializedTabs,
+    tabs: tabs
+      .slice()
+      .sort((a, b) => a.index - b.index)
+      .map((tab) => serializeTabForSnapshot(tab, windowId)),
     groups: groups.map(serializeGroup)
   };
 }

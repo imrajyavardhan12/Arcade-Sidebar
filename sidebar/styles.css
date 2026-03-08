@@ -109,6 +109,11 @@
   color: var(--bts-sidebar-muted);
 }
 
+.bts-context-menu-item.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .bts-context-menu-separator {
   height: 1px;
   background: var(--bts-sidebar-border);
