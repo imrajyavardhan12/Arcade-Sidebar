@@ -38,6 +38,7 @@
         "sidebar/search.js",
         "sidebar/groups.js",
         "sidebar/tabs.js",
+        "sidebar/drag-state.js",
         "content.js"
       ],
       "run_at": "document_idle"

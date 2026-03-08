@@ -11,8 +11,9 @@
   const searchModule = globalScope.BraveSidebarSearch;
   const groupsModule = globalScope.BraveSidebarGroups;
   const tabsModule = globalScope.BraveSidebarTabs;
+  const dragStateModule = globalScope.BraveSidebarDragState;
 
-  if (!searchModule || !groupsModule || !tabsModule) {
+  if (!searchModule || !groupsModule || !tabsModule || !dragStateModule) {
     return;
   }
 
@@ -295,18 +296,7 @@
   }
 
   function normalizeUrlKey(url) {
-    const raw = String(url || "").trim();
-    if (!raw) {
-      return "";
-    }
-
-    try {
-      const parsed = new URL(raw);
-      parsed.hash = "";
-      return parsed.toString();
-    } catch {
-      return raw;
-    }
+    return dragStateModule.normalizeUrlKey(url);
   }
 
   function sanitizeSavedItem(item) {
@@ -476,25 +466,11 @@
   }
 
   function isUrlInFavorites(url) {
-    const key = normalizeUrlKey(url);
-    return sidebarData.favorites.some((item) => normalizeUrlKey(item.url) === key);
+    return dragStateModule.isUrlInFavorites(sidebarData.favorites, url);
   }
 
   function isUrlPinnedInActiveSpace(url) {
-    const key = normalizeUrlKey(url);
-    for (const node of getActiveSpacePinnedNodes()) {
-      if (node?.type === "link" && normalizeUrlKey(node.url) === key) {
-        return true;
-      }
-
-      if (node?.type === "folder" && Array.isArray(node.children)) {
-        if (node.children.some((child) => normalizeUrlKey(child.url) === key)) {
-          return true;
-        }
-      }
-    }
-
-    return false;
+    return dragStateModule.isUrlPinnedInNodes(getActiveSpacePinnedNodes(), url);
   }
 
   async function persistSidebarData() {
@@ -584,15 +560,6 @@
     await persistSidebarData();
   }
 
-  async function removeFavoriteById(itemId) {
-    sidebarData.favorites = sidebarData.favorites.filter((item) => item.id !== itemId);
-    await persistSidebarData();
-  }
-
-  function findFavoriteById(itemId) {
-    return sidebarData.favorites.find((item) => item.id === itemId) || null;
-  }
-
   async function pinTabInActiveSpace(tab) {
     const item = createSavedItemFromTab(tab);
     if (!item) {
@@ -662,23 +629,6 @@
 
     sidebarData.pinnedBySpace[activeSpace.id] = next;
     await persistSidebarData();
-  }
-
-  function findPinnedLinkNodeById(nodes, linkId) {
-    for (const node of nodes) {
-      if (node?.type === "link" && node.id === linkId) {
-        return node;
-      }
-
-      if (node?.type === "folder" && Array.isArray(node.children)) {
-        const child = node.children.find((item) => item.id === linkId);
-        if (child) {
-          return child;
-        }
-      }
-    }
-
-    return null;
   }
 
   async function unpinUrlInActiveSpace(url) {
@@ -930,64 +880,22 @@
 
     const activeSpace = getActiveSpace();
     const currentItems = getActiveSpacePinnedNodes().slice();
-    const targetFolder = currentItems.find(
-      (node) => node?.type === "folder" && node.id === targetFolderId
-    );
-
-    if (!targetFolder || pinnedDragContext.fromFolderId === targetFolderId) {
-      return;
-    }
-
-    const sourceNode = findPinnedLinkNodeById(currentItems, pinnedDragContext.linkId);
-    if (!sourceNode) {
-      return;
-    }
-
-    const sourceUrlKey = normalizeUrlKey(sourceNode.url);
-    const duplicateAlreadyInTarget = targetFolder.children.some(
-      (child) => normalizeUrlKey(child.url) === sourceUrlKey
-    );
-
-    if (duplicateAlreadyInTarget) {
-      pinnedDragContext = null;
-      clearDragDropVisualState();
-      return;
-    }
-
-    let movedNode = null;
-
-    if (pinnedDragContext.fromFolderId) {
-      const sourceFolder = currentItems.find(
-        (node) => node?.type === "folder" && node.id === pinnedDragContext.fromFolderId
-      );
-
-      if (sourceFolder) {
-        const childIndex = sourceFolder.children.findIndex(
-          (child) => child.id === pinnedDragContext.linkId
-        );
-        if (childIndex >= 0) {
-          movedNode = sourceFolder.children.splice(childIndex, 1)[0];
-        }
-      }
-    } else {
-      const linkIndex = currentItems.findIndex(
-        (node) => node?.type === "link" && node.id === pinnedDragContext.linkId
-      );
-      if (linkIndex >= 0) {
-        movedNode = currentItems.splice(linkIndex, 1)[0];
-      }
-    }
-
-    if (!movedNode) {
-      return;
-    }
-
-    targetFolder.children.push({
-      ...movedNode,
-      type: "link"
+    const transition = dragStateModule.movePinnedLinkToFolder({
+      nodes: currentItems,
+      linkId: pinnedDragContext.linkId,
+      fromFolderId: pinnedDragContext.fromFolderId || null,
+      targetFolderId
     });
 
-    sidebarData.pinnedBySpace[activeSpace.id] = currentItems;
+    if (!transition.moved) {
+      if (transition.reason === "duplicateInTarget") {
+        pinnedDragContext = null;
+        clearDragDropVisualState();
+      }
+      return;
+    }
+
+    sidebarData.pinnedBySpace[activeSpace.id] = transition.nodes;
     await persistSidebarData();
     pinnedDragContext = null;
     clearDragDropVisualState();
@@ -1001,47 +909,25 @@
 
     const activeSpace = getActiveSpace();
     const currentItems = getActiveSpacePinnedNodes().slice();
+    const transition = dragStateModule.movePinnedLinkToTopLevel({
+      nodes: currentItems,
+      linkId: pinnedDragContext.linkId,
+      fromFolderId: pinnedDragContext.fromFolderId || null
+    });
 
-    if (!pinnedDragContext.fromFolderId) {
-      pinnedDragContext = null;
-      clearDragDropVisualState();
+    if (!transition.moved) {
+      if (
+        transition.reason === "noFromFolder" ||
+        transition.reason === "noSourceFolder" ||
+        transition.reason === "noSourceLink"
+      ) {
+        pinnedDragContext = null;
+        clearDragDropVisualState();
+      }
       return;
     }
 
-    const sourceFolder = currentItems.find(
-      (node) => node?.type === "folder" && node.id === pinnedDragContext.fromFolderId
-    );
-
-    if (!sourceFolder) {
-      pinnedDragContext = null;
-      clearDragDropVisualState();
-      return;
-    }
-
-    const childIndex = sourceFolder.children.findIndex(
-      (child) => child.id === pinnedDragContext.linkId
-    );
-
-    if (childIndex < 0) {
-      pinnedDragContext = null;
-      clearDragDropVisualState();
-      return;
-    }
-
-    const movedNode = sourceFolder.children.splice(childIndex, 1)[0];
-    const movedUrlKey = normalizeUrlKey(movedNode?.url);
-    const alreadyTopLevel = currentItems.some(
-      (node) => node?.type === "link" && normalizeUrlKey(node.url) === movedUrlKey
-    );
-
-    if (!alreadyTopLevel) {
-      currentItems.push({
-        ...movedNode,
-        type: "link"
-      });
-    }
-
-    sidebarData.pinnedBySpace[activeSpace.id] = currentItems;
+    sidebarData.pinnedBySpace[activeSpace.id] = transition.nodes;
     await persistSidebarData();
     pinnedDragContext = null;
     clearDragDropVisualState();
@@ -1054,27 +940,25 @@
       return;
     }
 
-    const favoriteItem = findFavoriteById(favoriteId);
-    if (!favoriteItem) {
-      favoriteDragContext = null;
-      clearDragDropVisualState();
+    const activeSpace = getActiveSpace();
+    const currentItems = getActiveSpacePinnedNodes().slice();
+    const transition = dragStateModule.moveFavoriteToPinnedTopLevel({
+      nodes: currentItems,
+      favorites: sidebarData.favorites,
+      favoriteId,
+      createPinnedId: () => `plink-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    });
+
+    if (!transition.moved) {
+      if (transition.reason === "noFavorite") {
+        favoriteDragContext = null;
+        clearDragDropVisualState();
+      }
       return;
     }
 
-    const activeSpace = getActiveSpace();
-    const currentItems = getActiveSpacePinnedNodes().slice();
-    const key = normalizeUrlKey(favoriteItem.url);
-    const updated = updatePinnedLinkByUrl(currentItems, key, (existing) => {
-      existing.title = favoriteItem.title;
-      existing.favIconUrl = favoriteItem.favIconUrl || existing.favIconUrl;
-    });
-
-    if (!updated) {
-      currentItems.push(createPinnedLinkNodeFromSavedItem(favoriteItem));
-    }
-
-    sidebarData.pinnedBySpace[activeSpace.id] = currentItems;
-    sidebarData.favorites = sidebarData.favorites.filter((item) => item.id !== favoriteId);
+    sidebarData.pinnedBySpace[activeSpace.id] = transition.nodes;
+    sidebarData.favorites = transition.favorites;
     await persistSidebarData();
     favoriteDragContext = null;
     clearDragDropVisualState();
@@ -1087,37 +971,26 @@
       return;
     }
 
-    const favoriteItem = findFavoriteById(favoriteId);
-    if (!favoriteItem) {
-      favoriteDragContext = null;
-      clearDragDropVisualState();
-      return;
-    }
-
     const activeSpace = getActiveSpace();
     const currentItems = getActiveSpacePinnedNodes().slice();
-    const targetFolder = currentItems.find(
-      (node) => node?.type === "folder" && node.id === targetFolderId
-    );
+    const transition = dragStateModule.moveFavoriteToFolder({
+      nodes: currentItems,
+      favorites: sidebarData.favorites,
+      favoriteId,
+      targetFolderId,
+      createPinnedId: () => `plink-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    });
 
-    if (!targetFolder) {
+    if (!transition.moved) {
+      if (transition.reason === "noFavorite") {
+        favoriteDragContext = null;
+        clearDragDropVisualState();
+      }
       return;
     }
 
-    const key = normalizeUrlKey(favoriteItem.url);
-    const existingChild = targetFolder.children.find(
-      (child) => normalizeUrlKey(child.url) === key
-    );
-
-    if (existingChild) {
-      existingChild.title = favoriteItem.title;
-      existingChild.favIconUrl = favoriteItem.favIconUrl || existingChild.favIconUrl;
-    } else {
-      targetFolder.children.push(createPinnedLinkNodeFromSavedItem(favoriteItem));
-    }
-
-    sidebarData.pinnedBySpace[activeSpace.id] = currentItems;
-    sidebarData.favorites = sidebarData.favorites.filter((item) => item.id !== favoriteId);
+    sidebarData.pinnedBySpace[activeSpace.id] = transition.nodes;
+    sidebarData.favorites = transition.favorites;
     await persistSidebarData();
     favoriteDragContext = null;
     clearDragDropVisualState();
@@ -1130,31 +1003,24 @@
       return;
     }
 
-    const activeSpaceItems = getActiveSpacePinnedNodes();
-    const sourceNode = findPinnedLinkNodeById(activeSpaceItems, linkId);
-    if (!sourceNode) {
+    const activeSpace = getActiveSpace();
+    const transition = dragStateModule.movePinnedLinkToFavorites({
+      nodes: getActiveSpacePinnedNodes(),
+      favorites: sidebarData.favorites,
+      linkId,
+      maxFavorites: MAX_FAVORITES,
+      createFavoriteId: () => `item-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    });
+
+    if (!transition.moved) {
       pinnedDragContext = null;
       clearDragDropVisualState();
       return;
     }
 
-    const sourceUrlKey = normalizeUrlKey(sourceNode.url);
-    const existedBefore = isUrlInFavorites(sourceUrlKey);
-    const countBefore = sidebarData.favorites.length;
-
-    await addTabToFavorites(sourceNode);
-
-    const existsAfter = isUrlInFavorites(sourceUrlKey);
-    const countAfter = sidebarData.favorites.length;
-    const movedToFavorites = existedBefore || existsAfter || countAfter > countBefore;
-
-    if (!movedToFavorites) {
-      pinnedDragContext = null;
-      clearDragDropVisualState();
-      return;
-    }
-
-    await removePinnedLinkById(linkId);
+    sidebarData.pinnedBySpace[activeSpace.id] = transition.nodes;
+    sidebarData.favorites = transition.favorites;
+    await persistSidebarData();
     pinnedDragContext = null;
     clearDragDropVisualState();
     renderTabList();
@@ -1165,7 +1031,18 @@
     if (!linkId) {
       return;
     }
-    await removePinnedLinkById(linkId);
+
+    const activeSpace = getActiveSpace();
+    const transition = dragStateModule.movePinnedLinkToToday({
+      nodes: getActiveSpacePinnedNodes(),
+      linkId
+    });
+
+    if (transition.moved) {
+      sidebarData.pinnedBySpace[activeSpace.id] = transition.nodes;
+      await persistSidebarData();
+    }
+
     pinnedDragContext = null;
     clearDragDropVisualState();
     renderTabList();
@@ -1176,7 +1053,17 @@
     if (!favoriteId) {
       return;
     }
-    await removeFavoriteById(favoriteId);
+
+    const transition = dragStateModule.moveFavoriteToToday({
+      favorites: sidebarData.favorites,
+      favoriteId
+    });
+
+    if (transition.moved) {
+      sidebarData.favorites = transition.favorites;
+      await persistSidebarData();
+    }
+
     favoriteDragContext = null;
     clearDragDropVisualState();
     renderTabList();
@@ -2025,12 +1912,10 @@
   }
 
   function getVisibleTabs() {
-    const tabsForToday = latestSnapshot.tabs.filter((tab) => {
-      const key = normalizeUrlKey(tab?.url);
-      if (!isHttpUrl(key)) {
-        return true;
-      }
-      return !isUrlPinnedInActiveSpace(key) && !isUrlInFavorites(key);
+    const tabsForToday = dragStateModule.filterTodayTabs({
+      tabs: latestSnapshot.tabs,
+      pinnedNodes: getActiveSpacePinnedNodes(),
+      favorites: sidebarData.favorites
     });
     return searchModule.filterTabs(tabsForToday, searchQuery);
   }
