@@ -4,6 +4,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
+const messages = require("../sidebar/messages.js");
+
+const { MESSAGE_TYPES } = messages;
+
 function createEvent() {
   const listeners = [];
   return {
@@ -384,6 +388,7 @@ function createBackgroundHarness(options = {}) {
 
     const context = vm.createContext({
       chrome,
+      BraveSidebarMessages: messages,
       fetch: async () => {
         throw new Error("FETCH_NOT_IMPLEMENTED_IN_TEST");
       },
@@ -472,17 +477,58 @@ test("content outbound sidebar messages are handled by background contract", () 
   const contentSource = fs.readFileSync(contentPath, "utf8");
   const backgroundSource = fs.readFileSync(backgroundPath, "utf8");
 
-  const contentOutboundTypes = extractMessageTypes(contentSource, /type:\s*"(sidebar:[^"]+)"/g);
-  const backgroundHandledTypes = extractMessageTypes(
+  const contentOutboundKeys = extractMessageTypes(contentSource, /type:\s*MESSAGE_TYPES\.([A-Z_]+)/g);
+  const backgroundHandledKeys = extractMessageTypes(
     backgroundSource,
-    /message\.type\s*===\s*"(sidebar:[^"]+)"/g
+    /message\.type\s*===\s*MESSAGE_TYPES\.([A-Z_]+)/g
   );
 
-  const missingTypes = Array.from(contentOutboundTypes)
-    .filter((type) => !backgroundHandledTypes.has(type))
+  const knownKeys = new Set(Object.keys(MESSAGE_TYPES));
+  const unknownContentKeys = Array.from(contentOutboundKeys)
+    .filter((key) => !knownKeys.has(key))
+    .sort();
+  const unknownBackgroundKeys = Array.from(backgroundHandledKeys)
+    .filter((key) => !knownKeys.has(key))
     .sort();
 
-  assert.deepEqual(missingTypes, []);
+  const missingHandledKeys = Array.from(contentOutboundKeys)
+    .filter((key) => !backgroundHandledKeys.has(key))
+    .sort();
+
+  assert.deepEqual(unknownContentKeys, []);
+  assert.deepEqual(unknownBackgroundKeys, []);
+  assert.deepEqual(missingHandledKeys, []);
+});
+
+test("background rejects invalid message payloads via shared contract", async () => {
+  const harness = createBackgroundHarness({
+    tabs: [
+      {
+        id: 1,
+        windowId: 1,
+        index: 0,
+        title: "A",
+        url: "https://a.example.com",
+        active: true
+      }
+    ]
+  });
+
+  harness.loadBackground();
+
+  const response = await harness.sendRuntimeMessage(
+    {
+      type: MESSAGE_TYPES.CREATE_TAB,
+      payload: {
+        windowId: "invalid-window-id",
+        url: "https://new.example.com"
+      }
+    },
+    { tab: { id: 1, windowId: 1 } }
+  );
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error, "INVALID_WINDOW_ID");
 });
 
 test("background serves getState and setWindowOpen flows used by content", async () => {
@@ -513,7 +559,7 @@ test("background serves getState and setWindowOpen flows used by content", async
 
   const stateResponse = await harness.sendRuntimeMessage(
     {
-      type: "sidebar:getState",
+      type: MESSAGE_TYPES.GET_STATE,
       payload: { windowId: 7 }
     },
     { tab: { id: 10, windowId: 7 } }
@@ -526,7 +572,7 @@ test("background serves getState and setWindowOpen flows used by content", async
 
   const openResponse = await harness.sendRuntimeMessage(
     {
-      type: "sidebar:setWindowOpen",
+      type: MESSAGE_TYPES.SET_WINDOW_OPEN,
       payload: { windowId: 7, open: true }
     },
     { tab: { id: 10, windowId: 7 } }
@@ -536,7 +582,7 @@ test("background serves getState and setWindowOpen flows used by content", async
   assert.equal(harness.storage.bts_window_state_7.open, true);
 
   const openMessages = harness.sentTabMessages.filter(
-    (entry) => entry.message?.type === "sidebar:setOpen"
+    (entry) => entry.message?.type === MESSAGE_TYPES.SET_OPEN
   );
 
   assert.equal(openMessages.length, 2);
@@ -571,7 +617,7 @@ test("background handles tab and group mutation messages from content", async ()
 
   const createResponse = await harness.sendRuntimeMessage(
     {
-      type: "sidebar:createTab",
+      type: MESSAGE_TYPES.CREATE_TAB,
       payload: {
         windowId: 9,
         url: "  https://new.example.com/path  "
@@ -588,7 +634,7 @@ test("background handles tab and group mutation messages from content", async ()
 
   const activateResponse = await harness.sendRuntimeMessage(
     {
-      type: "sidebar:activateTab",
+      type: MESSAGE_TYPES.ACTIVATE_TAB,
       payload: { tabId: 22 }
     },
     { tab: { id: 21, windowId: 9 } }
@@ -600,7 +646,7 @@ test("background handles tab and group mutation messages from content", async ()
 
   const moveResponse = await harness.sendRuntimeMessage(
     {
-      type: "sidebar:moveTab",
+      type: MESSAGE_TYPES.MOVE_TAB,
       payload: { tabId: targetTab.id, index: 0 }
     },
     { tab: { id: 21, windowId: 9 } }
@@ -615,7 +661,7 @@ test("background handles tab and group mutation messages from content", async ()
 
   const createGroupResponse = await harness.sendRuntimeMessage(
     {
-      type: "sidebar:setTabGroup",
+      type: MESSAGE_TYPES.SET_TAB_GROUP,
       payload: {
         tabId: targetTab.id,
         createNew: true,
@@ -634,7 +680,7 @@ test("background handles tab and group mutation messages from content", async ()
 
   const ungroupResponse = await harness.sendRuntimeMessage(
     {
-      type: "sidebar:setTabGroup",
+      type: MESSAGE_TYPES.SET_TAB_GROUP,
       payload: {
         tabId: targetTab.id,
         groupId: -1
@@ -648,7 +694,7 @@ test("background handles tab and group mutation messages from content", async ()
 
   const closeResponse = await harness.sendRuntimeMessage(
     {
-      type: "sidebar:closeTab",
+      type: MESSAGE_TYPES.CLOSE_TAB,
       payload: { tabId: targetTab.id }
     },
     { tab: { id: 21, windowId: 9 } }
