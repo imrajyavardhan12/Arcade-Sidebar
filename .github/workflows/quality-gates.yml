@@ -25,6 +25,8 @@ jobs:
           node --test tests/render-perf.test.js
           node --test tests/quick-switcher.test.js
           node --test tests/command-palette-data.test.js
+          node --test tests/context-menu-model.test.js
+          node --test tests/drag-drop-controller.test.js
           node --test tests/message-contract.integration.test.js
           node --test tests/drag-drop-journeys.integration.test.js
           node --test tests/sidebar-smoke.e2e.test.js
@@ -36,8 +38,10 @@ jobs:
           node --check sidebar/tabs.js
           node --check sidebar/sidebar-data.js
           node --check sidebar/drag-state.js
+          node --check sidebar/drag-drop-controller.js
           node --check sidebar/keyboard-nav.js
           node --check sidebar/render-perf.js
+          node --check sidebar/context-menu-model.js
           node --check sidebar/command-palette-data.js
           node --check sidebar/quick-switcher.js
           node -e "const fs=require('fs'); JSON.parse(fs.readFileSync('manifest.json','utf8'));"

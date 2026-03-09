@@ -13,8 +13,10 @@
   const tabsModule = globalScope.BraveSidebarTabs;
   const sidebarDataModule = globalScope.BraveSidebarData;
   const dragStateModule = globalScope.BraveSidebarDragState;
+  const dragDropControllerModule = globalScope.BraveSidebarDragDropController;
   const keyboardNavModule = globalScope.BraveSidebarKeyboardNav;
   const renderPerfModule = globalScope.BraveSidebarRenderPerf;
+  const contextMenuModelModule = globalScope.BraveSidebarContextMenuModel;
   const commandPaletteDataModule = globalScope.BraveSidebarCommandPaletteData;
   const quickSwitcherModule = globalScope.BraveSidebarQuickSwitcher;
   const messagesModule = globalScope.BraveSidebarMessages;
@@ -25,8 +27,10 @@
     !tabsModule ||
     !sidebarDataModule ||
     !dragStateModule ||
+    !dragDropControllerModule ||
     !keyboardNavModule ||
     !renderPerfModule ||
+    !contextMenuModelModule ||
     !commandPaletteDataModule ||
     !quickSwitcherModule
   ) {
@@ -77,9 +81,6 @@
   let commandPaletteQuery = "";
   let commandPaletteItems = [];
   let commandPaletteFocusedIndex = -1;
-  let pinnedDragContext = null;
-  let favoriteDragContext = null;
-  let draggingTabId = null;
   let suppressPointerUntil = 0;
   let runtimeContextAlive = true;
   let sidebarData = {
@@ -103,6 +104,10 @@
     (run) => globalScope.requestAnimationFrame(run),
     (frameHandle) => globalScope.cancelAnimationFrame(frameHandle)
   );
+  const dragDropController = dragDropControllerModule.createDragDropController({
+    dragStateModule,
+    maxFavorites: MAX_FAVORITES
+  });
   sidebarDataSignature = getSidebarDataSignature(sidebarData);
 
   const host = document.createElement("div");
@@ -678,7 +683,7 @@
     if (options.favorite) {
       button.draggable = true;
       button.addEventListener("dragstart", (event) => {
-        favoriteDragContext = { itemId: item.id };
+        dragDropController.beginFavoriteDrag(item.id);
         button.classList.add("is-dragging");
         if (event.dataTransfer) {
           event.dataTransfer.effectAllowed = "move";
@@ -686,7 +691,7 @@
         }
       });
       button.addEventListener("dragend", () => {
-        favoriteDragContext = null;
+        dragDropController.endFavoriteDrag();
         button.classList.remove("is-dragging");
         clearDragDropVisualState();
       });
@@ -735,10 +740,7 @@
     }
 
     button.addEventListener("dragstart", (event) => {
-      pinnedDragContext = {
-        linkId: node.id,
-        fromFolderId: options.folderId || null
-      };
+      dragDropController.beginPinnedDrag(node.id, options.folderId || null);
       button.classList.add("is-dragging");
       if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = "move";
@@ -747,7 +749,7 @@
     });
 
     button.addEventListener("dragend", () => {
-      pinnedDragContext = null;
+      dragDropController.endPinnedDrag();
       button.classList.remove("is-dragging");
       clearDragDropVisualState();
     });
@@ -818,22 +820,14 @@
   }
 
   async function movePinnedLinkToFolder(targetFolderId) {
-    if (!pinnedDragContext?.linkId) {
-      return;
-    }
-
     const activeSpace = getActiveSpace();
-    const currentItems = getActiveSpacePinnedNodes().slice();
-    const transition = dragStateModule.movePinnedLinkToFolder({
-      nodes: currentItems,
-      linkId: pinnedDragContext.linkId,
-      fromFolderId: pinnedDragContext.fromFolderId || null,
+    const transition = dragDropController.movePinnedLinkToFolder({
+      nodes: getActiveSpacePinnedNodes().slice(),
       targetFolderId
     });
 
     if (!transition.moved) {
       if (transition.reason === "duplicateInTarget") {
-        pinnedDragContext = null;
         clearDragDropVisualState();
       }
       return;
@@ -841,22 +835,14 @@
 
     sidebarData.pinnedBySpace[activeSpace.id] = transition.nodes;
     await persistSidebarData();
-    pinnedDragContext = null;
     clearDragDropVisualState();
     renderTabList();
   }
 
   async function movePinnedLinkToTopLevel() {
-    if (!pinnedDragContext?.linkId) {
-      return;
-    }
-
     const activeSpace = getActiveSpace();
-    const currentItems = getActiveSpacePinnedNodes().slice();
-    const transition = dragStateModule.movePinnedLinkToTopLevel({
-      nodes: currentItems,
-      linkId: pinnedDragContext.linkId,
-      fromFolderId: pinnedDragContext.fromFolderId || null
+    const transition = dragDropController.movePinnedLinkToTopLevel({
+      nodes: getActiveSpacePinnedNodes().slice()
     });
 
     if (!transition.moved) {
@@ -865,7 +851,6 @@
         transition.reason === "noSourceFolder" ||
         transition.reason === "noSourceLink"
       ) {
-        pinnedDragContext = null;
         clearDragDropVisualState();
       }
       return;
@@ -873,29 +858,20 @@
 
     sidebarData.pinnedBySpace[activeSpace.id] = transition.nodes;
     await persistSidebarData();
-    pinnedDragContext = null;
     clearDragDropVisualState();
     renderTabList();
   }
 
   async function moveFavoriteToPinnedTopLevel() {
-    const favoriteId = favoriteDragContext?.itemId;
-    if (!favoriteId) {
-      return;
-    }
-
     const activeSpace = getActiveSpace();
-    const currentItems = getActiveSpacePinnedNodes().slice();
-    const transition = dragStateModule.moveFavoriteToPinnedTopLevel({
-      nodes: currentItems,
+    const transition = dragDropController.moveFavoriteToPinnedTopLevel({
+      nodes: getActiveSpacePinnedNodes().slice(),
       favorites: sidebarData.favorites,
-      favoriteId,
       createPinnedId: () => `plink-${Date.now()}-${Math.random().toString(16).slice(2)}`
     });
 
     if (!transition.moved) {
       if (transition.reason === "noFavorite") {
-        favoriteDragContext = null;
         clearDragDropVisualState();
       }
       return;
@@ -904,30 +880,21 @@
     sidebarData.pinnedBySpace[activeSpace.id] = transition.nodes;
     sidebarData.favorites = transition.favorites;
     await persistSidebarData();
-    favoriteDragContext = null;
     clearDragDropVisualState();
     renderTabList();
   }
 
   async function moveFavoriteToFolder(targetFolderId) {
-    const favoriteId = favoriteDragContext?.itemId;
-    if (!favoriteId) {
-      return;
-    }
-
     const activeSpace = getActiveSpace();
-    const currentItems = getActiveSpacePinnedNodes().slice();
-    const transition = dragStateModule.moveFavoriteToFolder({
-      nodes: currentItems,
+    const transition = dragDropController.moveFavoriteToFolder({
+      nodes: getActiveSpacePinnedNodes().slice(),
       favorites: sidebarData.favorites,
-      favoriteId,
       targetFolderId,
       createPinnedId: () => `plink-${Date.now()}-${Math.random().toString(16).slice(2)}`
     });
 
     if (!transition.moved) {
       if (transition.reason === "noFavorite") {
-        favoriteDragContext = null;
         clearDragDropVisualState();
       }
       return;
@@ -936,28 +903,19 @@
     sidebarData.pinnedBySpace[activeSpace.id] = transition.nodes;
     sidebarData.favorites = transition.favorites;
     await persistSidebarData();
-    favoriteDragContext = null;
     clearDragDropVisualState();
     renderTabList();
   }
 
   async function movePinnedLinkToFavorites() {
-    const linkId = pinnedDragContext?.linkId;
-    if (!linkId) {
-      return;
-    }
-
     const activeSpace = getActiveSpace();
-    const transition = dragStateModule.movePinnedLinkToFavorites({
+    const transition = dragDropController.movePinnedLinkToFavorites({
       nodes: getActiveSpacePinnedNodes(),
       favorites: sidebarData.favorites,
-      linkId,
-      maxFavorites: MAX_FAVORITES,
       createFavoriteId: () => `item-${Date.now()}-${Math.random().toString(16).slice(2)}`
     });
 
     if (!transition.moved) {
-      pinnedDragContext = null;
       clearDragDropVisualState();
       return;
     }
@@ -965,21 +923,14 @@
     sidebarData.pinnedBySpace[activeSpace.id] = transition.nodes;
     sidebarData.favorites = transition.favorites;
     await persistSidebarData();
-    pinnedDragContext = null;
     clearDragDropVisualState();
     renderTabList();
   }
 
   async function movePinnedLinkToToday() {
-    const linkId = pinnedDragContext?.linkId;
-    if (!linkId) {
-      return;
-    }
-
     const activeSpace = getActiveSpace();
-    const transition = dragStateModule.movePinnedLinkToToday({
+    const transition = dragDropController.movePinnedLinkToToday({
       nodes: getActiveSpacePinnedNodes(),
-      linkId
     });
 
     if (transition.moved) {
@@ -987,20 +938,13 @@
       await persistSidebarData();
     }
 
-    pinnedDragContext = null;
     clearDragDropVisualState();
     renderTabList();
   }
 
   async function moveFavoriteToToday() {
-    const favoriteId = favoriteDragContext?.itemId;
-    if (!favoriteId) {
-      return;
-    }
-
-    const transition = dragStateModule.moveFavoriteToToday({
+    const transition = dragDropController.moveFavoriteToToday({
       favorites: sidebarData.favorites,
-      favoriteId
     });
 
     if (transition.moved) {
@@ -1008,7 +952,6 @@
       await persistSidebarData();
     }
 
-    favoriteDragContext = null;
     clearDragDropVisualState();
     renderTabList();
   }
@@ -1176,28 +1119,27 @@
       event.stopPropagation();
       clearDragDropVisualState();
 
-      if (pinnedDragContext?.linkId) {
+      if (dragDropController.hasPinnedDrag()) {
         await movePinnedLinkToFolder(folder.id);
         return;
       }
 
-      if (favoriteDragContext?.itemId) {
+      if (dragDropController.hasFavoriteDrag()) {
         await moveFavoriteToFolder(folder.id);
         return;
       }
 
-      if (Number.isInteger(draggingTabId)) {
-        const droppedTabId = draggingTabId;
-        draggingTabId = null;
+      if (dragDropController.hasTabDrag()) {
+        const droppedTabId = dragDropController.consumeDraggingTabId();
         await pinSnapshotTabToFolder(droppedTabId, folder.id);
       }
     };
 
     header.addEventListener("dragover", (event) => {
       if (
-        !pinnedDragContext?.linkId &&
-        !favoriteDragContext?.itemId &&
-        !Number.isInteger(draggingTabId)
+        !dragDropController.hasPinnedDrag() &&
+        !dragDropController.hasFavoriteDrag() &&
+        !dragDropController.hasTabDrag()
       ) {
         return;
       }
@@ -1219,9 +1161,9 @@
 
     body.addEventListener("dragover", (event) => {
       if (
-        !pinnedDragContext?.linkId &&
-        !favoriteDragContext?.itemId &&
-        !Number.isInteger(draggingTabId)
+        !dragDropController.hasPinnedDrag() &&
+        !dragDropController.hasFavoriteDrag() &&
+        !dragDropController.hasTabDrag()
       ) {
         return;
       }
@@ -1335,7 +1277,7 @@
 
   function setupArcDropZones() {
     favoritesGrid.addEventListener("dragover", (event) => {
-      if (!Number.isInteger(draggingTabId) && !pinnedDragContext?.linkId) {
+      if (!dragDropController.hasTabDrag() && !dragDropController.hasPinnedDrag()) {
         return;
       }
       event.preventDefault();
@@ -1347,8 +1289,8 @@
     });
 
     favoritesGrid.addEventListener("drop", async (event) => {
-      const draggingLiveTab = Number.isInteger(draggingTabId);
-      const draggingPinnedLink = Boolean(pinnedDragContext?.linkId);
+      const draggingLiveTab = dragDropController.hasTabDrag();
+      const draggingPinnedLink = dragDropController.hasPinnedDrag();
       if (!draggingLiveTab && !draggingPinnedLink) {
         return;
       }
@@ -1361,15 +1303,14 @@
         return;
       }
 
-      const droppedTabId = draggingTabId;
-      draggingTabId = null;
+      const droppedTabId = dragDropController.consumeDraggingTabId();
       await favoriteSnapshotTab(droppedTabId);
     });
 
     pinnedList.addEventListener("dragover", (event) => {
-      const draggingLiveTab = Number.isInteger(draggingTabId);
-      const draggingPinnedLink = Boolean(pinnedDragContext?.linkId);
-      const draggingFavorite = Boolean(favoriteDragContext?.itemId);
+      const draggingLiveTab = dragDropController.hasTabDrag();
+      const draggingPinnedLink = dragDropController.hasPinnedDrag();
+      const draggingFavorite = dragDropController.hasFavoriteDrag();
       if (!draggingLiveTab && !draggingPinnedLink && !draggingFavorite) {
         return;
       }
@@ -1389,9 +1330,9 @@
     });
 
     pinnedList.addEventListener("drop", async (event) => {
-      const draggingLiveTab = Number.isInteger(draggingTabId);
-      const draggingPinnedLink = Boolean(pinnedDragContext?.linkId);
-      const draggingFavorite = Boolean(favoriteDragContext?.itemId);
+      const draggingLiveTab = dragDropController.hasTabDrag();
+      const draggingPinnedLink = dragDropController.hasPinnedDrag();
+      const draggingFavorite = dragDropController.hasFavoriteDrag();
       if (!draggingLiveTab && !draggingPinnedLink && !draggingFavorite) {
         return;
       }
@@ -1415,13 +1356,12 @@
         return;
       }
 
-      const droppedTabId = draggingTabId;
-      draggingTabId = null;
+      const droppedTabId = dragDropController.consumeDraggingTabId();
       await pinSnapshotTabToSidebar(droppedTabId);
     });
 
     tabList.addEventListener("dragover", (event) => {
-      if (!pinnedDragContext?.linkId && !favoriteDragContext?.itemId) {
+      if (!dragDropController.hasPinnedDrag() && !dragDropController.hasFavoriteDrag()) {
         return;
       }
       event.preventDefault();
@@ -1433,12 +1373,12 @@
     });
 
     tabList.addEventListener("drop", async (event) => {
-      if (!pinnedDragContext?.linkId && !favoriteDragContext?.itemId) {
+      if (!dragDropController.hasPinnedDrag() && !dragDropController.hasFavoriteDrag()) {
         return;
       }
       event.preventDefault();
       event.stopPropagation();
-      if (pinnedDragContext?.linkId) {
+      if (dragDropController.hasPinnedDrag()) {
         await movePinnedLinkToToday();
         return;
       }
@@ -1807,6 +1747,116 @@
     contextMenuEl.style.top = `${top}px`;
   }
 
+  async function executeContextMenuAction(actionId, tab, options = {}) {
+    const tabUrl = options.tabUrl;
+    const groupId = options.groupId;
+
+    if (actionId === "remove-from-favorites") {
+      await removeFavoriteByUrl(tabUrl);
+      renderTabList();
+      return;
+    }
+
+    if (actionId === "add-to-favorites") {
+      const resolvedTab = await resolveTabForStorage(tab);
+      await addTabToFavorites(resolvedTab);
+      renderTabList();
+      return;
+    }
+
+    if (actionId === "unpin-from-sidebar") {
+      await unpinUrlInActiveSpace(tabUrl);
+      renderTabList();
+      return;
+    }
+
+    if (actionId === "pin-to-sidebar") {
+      const resolvedTab = await resolveTabForStorage(tab);
+      await pinTabInActiveSpace(resolvedTab);
+      renderTabList();
+      return;
+    }
+
+    if (actionId === "toggle-tab-pin") {
+      await sendMessage({
+        type: MESSAGE_TYPES.UPDATE_TAB,
+        payload: {
+          tabId: tab.id,
+          update: { pinned: !tab.pinned }
+        }
+      });
+      return;
+    }
+
+    if (actionId === "toggle-tab-mute") {
+      await sendMessage({
+        type: MESSAGE_TYPES.UPDATE_TAB,
+        payload: {
+          tabId: tab.id,
+          update: { muted: !tab.muted }
+        }
+      });
+      return;
+    }
+
+    if (actionId === "duplicate-tab") {
+      await sendMessage({
+        type: MESSAGE_TYPES.DUPLICATE_TAB,
+        payload: { tabId: tab.id }
+      });
+      return;
+    }
+
+    if (actionId === "close-other-tabs") {
+      await sendMessage({
+        type: MESSAGE_TYPES.CLOSE_OTHER_TABS,
+        payload: { tabId: tab.id }
+      });
+      return;
+    }
+
+    if (actionId === "close-tab") {
+      await sendMessage({
+        type: MESSAGE_TYPES.CLOSE_TAB,
+        payload: { tabId: tab.id }
+      });
+      return;
+    }
+
+    if (actionId === "move-to-new-group") {
+      await sendMessage({
+        type: MESSAGE_TYPES.SET_TAB_GROUP,
+        payload: {
+          tabId: tab.id,
+          createNew: true,
+          title: "New Group"
+        }
+      });
+      return;
+    }
+
+    if (actionId === "remove-from-group") {
+      await sendMessage({
+        type: MESSAGE_TYPES.SET_TAB_GROUP,
+        payload: {
+          tabId: tab.id,
+          groupId: -1
+        }
+      });
+      return;
+    }
+
+    if (actionId === "move-to-group" && Number.isInteger(groupId)) {
+      await sendMessage({
+        type: MESSAGE_TYPES.SET_TAB_GROUP,
+        payload: {
+          tabId: tab.id,
+          groupId
+        }
+      });
+    }
+  }
+
   function openContextMenuForTab(tab, x, y) {
     closeCommandPalette({ restoreTabFocus: false });
 
@@ -1816,179 +1866,33 @@
     }
 
     contextMenuTabId = tab.id;
-    const items = [];
-    const groups = (latestSnapshot.groups || []).slice().sort((a, b) => {
-      return String(a.title || "").localeCompare(String(b.title || ""));
-    });
-
     const tabUrl = normalizeUrlKey(tab.url);
     const canStoreUrl = isHttpUrl(tabUrl);
+    const model = contextMenuModelModule.buildTabContextMenuModel({
+      tab,
+      groups: latestSnapshot.groups,
+      canStoreUrl,
+      isFavorite: isUrlInFavorites(tabUrl),
+      favoritesCount: sidebarData.favorites.length,
+      maxFavorites: MAX_FAVORITES,
+      isPinnedInActiveSpace: isUrlPinnedInActiveSpace(tabUrl)
+    });
 
-    if (canStoreUrl) {
-      if (isUrlInFavorites(tabUrl)) {
-        items.push(
-          createContextMenuItem("Remove from favorites", async () => {
-            await removeFavoriteByUrl(tabUrl);
-            renderTabList();
-          })
-        );
-      } else {
-        if (sidebarData.favorites.length >= MAX_FAVORITES) {
-          items.push(
-            createContextMenuItem(`Favorites full (${MAX_FAVORITES})`, async () => {}, {
-              secondary: true,
-              disabled: true
-            })
-          );
-        } else {
-          items.push(
-            createContextMenuItem("Add to favorites", async () => {
-              const resolvedTab = await resolveTabForStorage(tab);
-              await addTabToFavorites(resolvedTab);
-              renderTabList();
-            })
-          );
+    const items = model.map((entry) => {
+      if (entry.kind === "separator") {
+        return createContextMenuSeparator();
+      }
+
+      return createContextMenuItem(
+        entry.label,
+        () => executeContextMenuAction(entry.id, tab, { tabUrl, groupId: entry.groupId }),
+        {
+          destructive: entry.destructive,
+          secondary: entry.secondary,
+          disabled: entry.disabled
         }
-      }
-
-      if (isUrlPinnedInActiveSpace(tabUrl)) {
-        items.push(
-          createContextMenuItem("Unpin from sidebar", async () => {
-            await unpinUrlInActiveSpace(tabUrl);
-            renderTabList();
-          })
-        );
-      } else {
-        items.push(
-          createContextMenuItem("Pin to sidebar", async () => {
-            const resolvedTab = await resolveTabForStorage(tab);
-            await pinTabInActiveSpace(resolvedTab);
-            renderTabList();
-          })
-        );
-      }
-
-      items.push(createContextMenuSeparator());
-    } else {
-      items.push(
-        createContextMenuItem("Pin unavailable for this page", async () => {}, {
-          secondary: true,
-          disabled: true
-        })
       );
-      items.push(
-        createContextMenuItem("Favorites unavailable for this page", async () => {}, {
-          secondary: true,
-          disabled: true
-        })
-      );
-      items.push(createContextMenuSeparator());
-    }
-
-    items.push(
-      createContextMenuItem(tab.pinned ? "Unpin tab" : "Pin tab", () => {
-        return sendMessage({
-          type: MESSAGE_TYPES.UPDATE_TAB,
-          payload: {
-            tabId: tab.id,
-            update: { pinned: !tab.pinned }
-          }
-        });
-      })
-    );
-
-    items.push(
-      createContextMenuItem(tab.muted ? "Unmute tab" : "Mute tab", () => {
-        return sendMessage({
-          type: MESSAGE_TYPES.UPDATE_TAB,
-          payload: {
-            tabId: tab.id,
-            update: { muted: !tab.muted }
-          }
-        });
-      })
-    );
-
-    items.push(createContextMenuSeparator());
-
-    items.push(
-      createContextMenuItem("Duplicate tab", () => {
-        return sendMessage({
-          type: MESSAGE_TYPES.DUPLICATE_TAB,
-          payload: { tabId: tab.id }
-        });
-      })
-    );
-
-    items.push(
-      createContextMenuItem("Close other tabs", () => {
-        return sendMessage({
-          type: MESSAGE_TYPES.CLOSE_OTHER_TABS,
-          payload: { tabId: tab.id }
-        });
-      })
-    );
-
-    items.push(
-      createContextMenuItem(
-        "Close tab",
-        () => {
-          return sendMessage({
-            type: MESSAGE_TYPES.CLOSE_TAB,
-            payload: { tabId: tab.id }
-          });
-        },
-        { destructive: true }
-      )
-    );
-
-    items.push(createContextMenuSeparator());
-
-    items.push(
-      createContextMenuItem("Move to new group", () => {
-        return sendMessage({
-          type: MESSAGE_TYPES.SET_TAB_GROUP,
-          payload: {
-            tabId: tab.id,
-            createNew: true,
-            title: "New Group"
-          }
-        });
-      }, { secondary: true })
-    );
-
-    if (tab.groupId >= 0) {
-      items.push(
-        createContextMenuItem("Remove from group", () => {
-          return sendMessage({
-            type: MESSAGE_TYPES.SET_TAB_GROUP,
-            payload: {
-              tabId: tab.id,
-              groupId: -1
-            }
-          });
-        }, { secondary: true })
-      );
-    }
-
-    for (const group of groups) {
-      if (!Number.isInteger(group?.id) || group.id === tab.groupId) {
-        continue;
-      }
-
-      const groupName = group.title || "Unnamed group";
-      items.push(
-        createContextMenuItem(`Move to group: ${groupName}`, () => {
-          return sendMessage({
-            type: MESSAGE_TYPES.SET_TAB_GROUP,
-            payload: {
-              tabId: tab.id,
-              groupId: group.id
-            }
-          });
-        }, { secondary: true })
-      );
-    }
+    });
 
     contextMenuEl.replaceChildren(...items);
     contextMenuEl.classList.add("is-open");
@@ -2334,14 +2238,14 @@
         },
         onDragStart: (tabId) => {
           focusedTabId = tabId;
-          draggingTabId = tabId;
+          dragDropController.beginTabDrag(tabId);
         },
-        getDraggingTabId: () => draggingTabId,
+        getDraggingTabId: () => dragDropController.getDraggingTabId(),
         onDrop: (sourceTabId, targetTabId) => {
           void moveTabByDropSource(sourceTabId, targetTabId);
         },
         onDragEnd: () => {
-          draggingTabId = null;
+          dragDropController.endTabDrag();
           clearDragDropVisualState();
         }
       },
@@ -2731,9 +2635,7 @@
   });
 
   shadowRoot.addEventListener("dragend", () => {
-    draggingTabId = null;
-    pinnedDragContext = null;
-    favoriteDragContext = null;
+    dragDropController.resetAll();
     clearDragDropVisualState();
   });
 

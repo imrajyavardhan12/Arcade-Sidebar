@@ -33,8 +33,10 @@ const INJECT_FILES = [
   "sidebar/tabs.js",
   "sidebar/sidebar-data.js",
   "sidebar/drag-state.js",
+  "sidebar/drag-drop-controller.js",
   "sidebar/keyboard-nav.js",
   "sidebar/render-perf.js",
+  "sidebar/context-menu-model.js",
   "sidebar/command-palette-data.js",
   "sidebar/quick-switcher.js",
   "content.js"
