@@ -42,6 +42,7 @@
         "https://*/*"
       ],
       "js": [
+        "sidebar/messages.js",
         "sidebar/search.js",
         "sidebar/groups.js",
         "sidebar/tabs.js",
@@ -49,6 +50,7 @@
         "sidebar/drag-state.js",
         "sidebar/keyboard-nav.js",
         "sidebar/render-perf.js",
+        "sidebar/command-palette-data.js",
         "sidebar/quick-switcher.js",
         "content.js"
       ],

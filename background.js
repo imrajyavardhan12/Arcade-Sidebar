@@ -1,7 +1,33 @@
+if (typeof importScripts === "function") {
+  try {
+    importScripts("sidebar/messages.js");
+  } catch {}
+}
+
 const WINDOW_STATE_PREFIX = "bts_window_state_";
 const TOGGLE_COMMAND = "toggle-sidebar";
 const TOGGLE_COMMAND_PALETTE = "toggle-command-palette";
+const messageContract = globalThis.BraveSidebarMessages;
+const MESSAGE_TYPES = messageContract?.MESSAGE_TYPES || {
+  GET_STATE: "sidebar:getState",
+  GET_TAB: "sidebar:getTab",
+  SET_WINDOW_OPEN: "sidebar:setWindowOpen",
+  ACTIVATE_TAB: "sidebar:activateTab",
+  CLOSE_TAB: "sidebar:closeTab",
+  CREATE_TAB: "sidebar:createTab",
+  MOVE_TAB: "sidebar:moveTab",
+  UPDATE_TAB: "sidebar:updateTab",
+  DUPLICATE_TAB: "sidebar:duplicateTab",
+  CLOSE_OTHER_TABS: "sidebar:closeOtherTabs",
+  SET_TAB_GROUP: "sidebar:setTabGroup",
+  PING: "sidebar:ping",
+  STATE: "sidebar:state",
+  SET_OPEN: "sidebar:setOpen",
+  TOGGLE_COMMAND_PALETTE: "sidebar:toggleCommandPalette"
+};
+
 const INJECT_FILES = [
+  "sidebar/messages.js",
   "sidebar/search.js",
   "sidebar/groups.js",
   "sidebar/tabs.js",
@@ -9,6 +35,7 @@ const INJECT_FILES = [
   "sidebar/drag-state.js",
   "sidebar/keyboard-nav.js",
   "sidebar/render-perf.js",
+  "sidebar/command-palette-data.js",
   "sidebar/quick-switcher.js",
   "content.js"
 ];
@@ -42,6 +69,24 @@ function queryTabs(queryInfo) {
       resolve(tabs || []);
     });
   });
+}
+
+function validateIncomingMessage(message) {
+  if (!message || typeof message !== "object") {
+    return { ok: false, error: "INVALID_MESSAGE" };
+  }
+
+  const isKnownMessageType = messageContract?.isKnownMessageType;
+  if (typeof isKnownMessageType === "function" && !isKnownMessageType(message.type)) {
+    return { ok: true };
+  }
+
+  const validatePayload = messageContract?.validatePayload;
+  if (typeof validatePayload !== "function") {
+    return { ok: true };
+  }
+
+  return validatePayload(message.type, message.payload);
 }
 
 function isSafeInlineImageUrl(url) {
@@ -354,7 +399,7 @@ async function ensureTabInjected(tab) {
   }
 
   const task = (async () => {
-    const ping = await sendMessageToTab(tab.id, { type: "sidebar:ping" });
+    const ping = await sendMessageToTab(tab.id, { type: MESSAGE_TYPES.PING });
     if (ping.ok) {
       return true;
     }
@@ -369,7 +414,7 @@ async function ensureTabInjected(tab) {
         files: INJECT_FILES
       });
 
-      const secondPing = await sendMessageToTab(tab.id, { type: "sidebar:ping" });
+      const secondPing = await sendMessageToTab(tab.id, { type: MESSAGE_TYPES.PING });
       return secondPing.ok;
     } catch {
       return false;
@@ -483,7 +528,7 @@ async function sendMessageToWindow(windowId, message) {
 async function broadcastWindowSnapshot(windowId) {
   const snapshot = await buildWindowSnapshot(windowId);
   await sendMessageToWindow(windowId, {
-    type: "sidebar:state",
+    type: MESSAGE_TYPES.STATE,
     payload: snapshot
   });
 }
@@ -519,7 +564,7 @@ async function toggleWindowOpen(windowId, activeTabId) {
   const nextOpen = !Boolean(state.open);
   await writeWindowState(windowId, { open: nextOpen });
   await sendMessageToWindow(windowId, {
-    type: "sidebar:setOpen",
+    type: MESSAGE_TYPES.SET_OPEN,
     payload: { windowId, open: nextOpen }
   });
 }
@@ -553,7 +598,7 @@ async function toggleLastFocusedWindowCommandPalette() {
   }
 
   await sendMessageToTab(activeTab.id, {
-    type: "sidebar:toggleCommandPalette",
+    type: MESSAGE_TYPES.TOGGLE_COMMAND_PALETTE,
     payload: { windowId: activeTab.windowId }
   });
 }
@@ -644,10 +689,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  const validation = validateIncomingMessage(message);
+  if (!validation.ok) {
+    sendResponse({ ok: false, error: validation.error });
+    return false;
+  }
+
   (async () => {
     const senderWindowId = sender.tab?.windowId;
 
-    if (message.type === "sidebar:getState") {
+    if (message.type === MESSAGE_TYPES.GET_STATE) {
       const windowId = Number.isInteger(message.payload?.windowId)
         ? message.payload.windowId
         : senderWindowId;
@@ -666,7 +717,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message.type === "sidebar:getTab") {
+    if (message.type === MESSAGE_TYPES.GET_TAB) {
       const tabId = message.payload?.tabId;
       if (!Number.isInteger(tabId)) {
         sendResponse({ ok: false, error: "INVALID_TAB_ID" });
@@ -679,7 +730,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message.type === "sidebar:setWindowOpen") {
+    if (message.type === MESSAGE_TYPES.SET_WINDOW_OPEN) {
       const windowId = Number.isInteger(message.payload?.windowId)
         ? message.payload.windowId
         : senderWindowId;
@@ -692,14 +743,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const nextOpen = Boolean(message.payload?.open);
       await writeWindowState(windowId, { open: nextOpen });
       await sendMessageToWindow(windowId, {
-        type: "sidebar:setOpen",
+        type: MESSAGE_TYPES.SET_OPEN,
         payload: { windowId, open: nextOpen }
       });
       sendResponse({ ok: true });
       return;
     }
 
-    if (message.type === "sidebar:activateTab") {
+    if (message.type === MESSAGE_TYPES.ACTIVATE_TAB) {
       const tabId = message.payload?.tabId;
       if (Number.isInteger(tabId)) {
         await updateTab(tabId, { active: true });
@@ -708,7 +759,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message.type === "sidebar:closeTab") {
+    if (message.type === MESSAGE_TYPES.CLOSE_TAB) {
       const tabId = message.payload?.tabId;
       if (Number.isInteger(tabId)) {
         await removeTabs(tabId);
@@ -717,7 +768,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message.type === "sidebar:createTab") {
+    if (message.type === MESSAGE_TYPES.CREATE_TAB) {
       const windowId = Number.isInteger(message.payload?.windowId)
         ? message.payload.windowId
         : senderWindowId;
@@ -737,7 +788,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message.type === "sidebar:moveTab") {
+    if (message.type === MESSAGE_TYPES.MOVE_TAB) {
       const tabId = message.payload?.tabId;
       const index = message.payload?.index;
       if (Number.isInteger(tabId) && Number.isInteger(index)) {
@@ -747,7 +798,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message.type === "sidebar:updateTab") {
+    if (message.type === MESSAGE_TYPES.UPDATE_TAB) {
       const tabId = message.payload?.tabId;
       const update = message.payload?.update;
       if (Number.isInteger(tabId) && update && typeof update === "object") {
@@ -758,7 +809,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message.type === "sidebar:duplicateTab") {
+    if (message.type === MESSAGE_TYPES.DUPLICATE_TAB) {
       const tabId = message.payload?.tabId;
       if (Number.isInteger(tabId)) {
         const duplicated = await duplicateTab(tabId);
@@ -770,7 +821,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message.type === "sidebar:closeOtherTabs") {
+    if (message.type === MESSAGE_TYPES.CLOSE_OTHER_TABS) {
       const tabId = message.payload?.tabId;
       if (Number.isInteger(tabId)) {
         const tab = await getTab(tabId);
@@ -789,7 +840,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
-    if (message.type === "sidebar:setTabGroup") {
+    if (message.type === MESSAGE_TYPES.SET_TAB_GROUP) {
       const tabId = message.payload?.tabId;
       const groupId = message.payload?.groupId;
       const createNew = Boolean(message.payload?.createNew);

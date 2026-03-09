@@ -15,7 +15,9 @@
   const dragStateModule = globalScope.BraveSidebarDragState;
   const keyboardNavModule = globalScope.BraveSidebarKeyboardNav;
   const renderPerfModule = globalScope.BraveSidebarRenderPerf;
+  const commandPaletteDataModule = globalScope.BraveSidebarCommandPaletteData;
   const quickSwitcherModule = globalScope.BraveSidebarQuickSwitcher;
+  const messagesModule = globalScope.BraveSidebarMessages;
 
   if (
     !searchModule ||
@@ -25,6 +27,7 @@
     !dragStateModule ||
     !keyboardNavModule ||
     !renderPerfModule ||
+    !commandPaletteDataModule ||
     !quickSwitcherModule
   ) {
     return;
@@ -43,6 +46,23 @@
   const MAX_WIDTH = 400;
   const OPEN_TRANSITION = "transform 250ms cubic-bezier(0.0, 0.0, 0.2, 1.0)";
   const CLOSE_TRANSITION = "transform 220ms cubic-bezier(0.4, 0.0, 1.0, 1.0)";
+  const MESSAGE_TYPES = messagesModule?.MESSAGE_TYPES || {
+    GET_STATE: "sidebar:getState",
+    GET_TAB: "sidebar:getTab",
+    SET_WINDOW_OPEN: "sidebar:setWindowOpen",
+    ACTIVATE_TAB: "sidebar:activateTab",
+    CLOSE_TAB: "sidebar:closeTab",
+    CREATE_TAB: "sidebar:createTab",
+    MOVE_TAB: "sidebar:moveTab",
+    UPDATE_TAB: "sidebar:updateTab",
+    DUPLICATE_TAB: "sidebar:duplicateTab",
+    CLOSE_OTHER_TABS: "sidebar:closeOtherTabs",
+    SET_TAB_GROUP: "sidebar:setTabGroup",
+    PING: "sidebar:ping",
+    STATE: "sidebar:state",
+    SET_OPEN: "sidebar:setOpen",
+    TOGGLE_COMMAND_PALETTE: "sidebar:toggleCommandPalette"
+  };
 
   let windowId = null;
   let sidebarWidth = DEFAULT_WIDTH;
@@ -275,9 +295,36 @@
       });
   }
 
+  function validateSidebarMessage(message) {
+    if (!message || typeof message !== "object") {
+      return { ok: false, error: "INVALID_MESSAGE" };
+    }
+
+    if (typeof message.type !== "string") {
+      return { ok: false, error: "INVALID_MESSAGE_TYPE" };
+    }
+
+    const isKnownMessageType = messagesModule?.isKnownMessageType;
+    if (typeof isKnownMessageType === "function" && !isKnownMessageType(message.type)) {
+      return { ok: false, error: "UNKNOWN_MESSAGE_TYPE" };
+    }
+
+    const validatePayload = messagesModule?.validatePayload;
+    if (typeof validatePayload !== "function") {
+      return { ok: true };
+    }
+
+    return validatePayload(message.type, message.payload);
+  }
+
   function sendMessage(message) {
     if (!runtimeContextAlive) {
       return Promise.resolve({ ok: false, error: "EXTENSION_CONTEXT_INVALIDATED" });
+    }
+
+    const validation = validateSidebarMessage(message);
+    if (!validation.ok) {
+      return Promise.resolve({ ok: false, error: validation.error });
     }
 
     return Promise.resolve()
@@ -561,14 +608,14 @@
     const existingTab = latestSnapshot.tabs.find((tab) => normalizeUrlKey(tab.url) === key);
     if (existingTab?.id) {
       await sendMessage({
-        type: "sidebar:activateTab",
+        type: MESSAGE_TYPES.ACTIVATE_TAB,
         payload: { tabId: existingTab.id }
       });
       return;
     }
 
     await sendMessage({
-      type: "sidebar:createTab",
+      type: MESSAGE_TYPES.CREATE_TAB,
       payload: {
         windowId,
         url: key
@@ -590,7 +637,7 @@
     }
 
     const response = await sendMessage({
-      type: "sidebar:getTab",
+      type: MESSAGE_TYPES.GET_TAB,
       payload: {
         tabId: tab.id
       }
@@ -1439,140 +1486,13 @@
     contextMenuEl.setAttribute("aria-hidden", "true");
   }
 
-  function getActiveSnapshotTab() {
-    return latestSnapshot.tabs.find((tab) => tab.active) || null;
-  }
-
-  function getPinnedLinkEntriesForPalette() {
-    const entries = [];
-    for (const node of getActiveSpacePinnedNodes()) {
-      if (node?.type === "link") {
-        entries.push({
-          node,
-          folderTitle: ""
-        });
-        continue;
-      }
-
-      if (node?.type === "folder" && Array.isArray(node.children)) {
-        for (const child of node.children) {
-          entries.push({
-            node: child,
-            folderTitle: node.title || "Folder"
-          });
-        }
-      }
-    }
-
-    return entries;
-  }
-
   function createCommandPaletteCandidates() {
-    const candidates = [];
-    const activeTab = getActiveSnapshotTab();
-
-    candidates.push({
-      id: "action:new-tab",
-      type: "action",
-      command: "new-tab",
-      label: "New Tab",
-      subtitle: "Create a new tab",
-      keywords: ["create", "tab", "new"]
+    return commandPaletteDataModule.createCommandPaletteCandidates({
+      tabs: latestSnapshot.tabs,
+      favorites: sidebarData.favorites,
+      pinnedNodes: getActiveSpacePinnedNodes(),
+      sidebarOpen
     });
-
-    candidates.push({
-      id: "action:focus-search",
-      type: "action",
-      command: "focus-search",
-      label: "Focus Sidebar Search",
-      subtitle: "Jump to the sidebar search input",
-      keywords: ["search", "find", "sidebar"]
-    });
-
-    candidates.push({
-      id: "action:toggle-sidebar",
-      type: "action",
-      command: "toggle-sidebar",
-      label: sidebarOpen ? "Hide Sidebar" : "Show Sidebar",
-      subtitle: "Toggle sidebar visibility",
-      keywords: ["toggle", "show", "hide", "sidebar"]
-    });
-
-    if (activeTab?.id) {
-      candidates.push({
-        id: "action:close-active-tab",
-        type: "action",
-        command: "close-active-tab",
-        tabId: activeTab.id,
-        label: "Close Active Tab",
-        subtitle: activeTab.title || activeTab.url || "Close tab",
-        keywords: ["close", "active", "tab"]
-      });
-
-      candidates.push({
-        id: "action:toggle-pin-active-tab",
-        type: "action",
-        command: "toggle-pin-active-tab",
-        tabId: activeTab.id,
-        nextPinned: !activeTab.pinned,
-        label: activeTab.pinned ? "Unpin Active Tab" : "Pin Active Tab",
-        subtitle: activeTab.title || activeTab.url || "Pin state",
-        keywords: ["pin", "unpin", "active", "tab"]
-      });
-    }
-
-    for (const tab of latestSnapshot.tabs) {
-      if (!Number.isInteger(tab?.id)) {
-        continue;
-      }
-
-      candidates.push({
-        id: `tab:${tab.id}`,
-        type: "tab",
-        command: "activate-tab",
-        tabId: tab.id,
-        label: tab.title || "Untitled tab",
-        subtitle: tab.url || "Open tab",
-        keywords: ["tab", tab.url, tab.title]
-      });
-    }
-
-    for (const favorite of sidebarData.favorites) {
-      if (!favorite?.url) {
-        continue;
-      }
-
-      candidates.push({
-        id: `favorite:${favorite.id}`,
-        type: "favorite",
-        command: "open-url",
-        url: favorite.url,
-        label: favorite.title || favorite.url,
-        subtitle: `Favorite • ${favorite.url}`,
-        keywords: ["favorite", favorite.title, favorite.url]
-      });
-    }
-
-    for (const entry of getPinnedLinkEntriesForPalette()) {
-      const linkNode = entry.node;
-      if (!linkNode?.url) {
-        continue;
-      }
-
-      candidates.push({
-        id: `pinned:${linkNode.id}`,
-        type: "pinned",
-        command: "open-url",
-        url: linkNode.url,
-        label: linkNode.title || linkNode.url,
-        subtitle: entry.folderTitle
-          ? `Pinned • ${entry.folderTitle} • ${linkNode.url}`
-          : `Pinned • ${linkNode.url}`,
-        keywords: ["pinned", entry.folderTitle, linkNode.title, linkNode.url]
-      });
-    }
-
-    return candidates;
   }
 
   function setCommandPaletteFocusedIndex(nextIndex) {
@@ -1672,7 +1592,7 @@
 
     if (item.command === "new-tab") {
       await sendMessage({
-        type: "sidebar:createTab",
+        type: MESSAGE_TYPES.CREATE_TAB,
         payload: {
           windowId
         }
@@ -1693,7 +1613,7 @@
 
     if (item.command === "close-active-tab" && Number.isInteger(item.tabId)) {
       await sendMessage({
-        type: "sidebar:closeTab",
+        type: MESSAGE_TYPES.CLOSE_TAB,
         payload: { tabId: item.tabId }
       });
       return;
@@ -1701,7 +1621,7 @@
 
     if (item.command === "toggle-pin-active-tab" && Number.isInteger(item.tabId)) {
       await sendMessage({
-        type: "sidebar:updateTab",
+        type: MESSAGE_TYPES.UPDATE_TAB,
         payload: {
           tabId: item.tabId,
           update: { pinned: Boolean(item.nextPinned) }
@@ -1713,7 +1633,7 @@
     if (item.command === "activate-tab" && Number.isInteger(item.tabId)) {
       focusedTabId = item.tabId;
       await sendMessage({
-        type: "sidebar:activateTab",
+        type: MESSAGE_TYPES.ACTIVATE_TAB,
         payload: { tabId: item.tabId }
       });
       return;
@@ -1968,7 +1888,7 @@
     items.push(
       createContextMenuItem(tab.pinned ? "Unpin tab" : "Pin tab", () => {
         return sendMessage({
-          type: "sidebar:updateTab",
+          type: MESSAGE_TYPES.UPDATE_TAB,
           payload: {
             tabId: tab.id,
             update: { pinned: !tab.pinned }
@@ -1980,7 +1900,7 @@
     items.push(
       createContextMenuItem(tab.muted ? "Unmute tab" : "Mute tab", () => {
         return sendMessage({
-          type: "sidebar:updateTab",
+          type: MESSAGE_TYPES.UPDATE_TAB,
           payload: {
             tabId: tab.id,
             update: { muted: !tab.muted }
@@ -1994,7 +1914,7 @@
     items.push(
       createContextMenuItem("Duplicate tab", () => {
         return sendMessage({
-          type: "sidebar:duplicateTab",
+          type: MESSAGE_TYPES.DUPLICATE_TAB,
           payload: { tabId: tab.id }
         });
       })
@@ -2003,7 +1923,7 @@
     items.push(
       createContextMenuItem("Close other tabs", () => {
         return sendMessage({
-          type: "sidebar:closeOtherTabs",
+          type: MESSAGE_TYPES.CLOSE_OTHER_TABS,
           payload: { tabId: tab.id }
         });
       })
@@ -2014,7 +1934,7 @@
         "Close tab",
         () => {
           return sendMessage({
-            type: "sidebar:closeTab",
+            type: MESSAGE_TYPES.CLOSE_TAB,
             payload: { tabId: tab.id }
           });
         },
@@ -2027,7 +1947,7 @@
     items.push(
       createContextMenuItem("Move to new group", () => {
         return sendMessage({
-          type: "sidebar:setTabGroup",
+          type: MESSAGE_TYPES.SET_TAB_GROUP,
           payload: {
             tabId: tab.id,
             createNew: true,
@@ -2041,7 +1961,7 @@
       items.push(
         createContextMenuItem("Remove from group", () => {
           return sendMessage({
-            type: "sidebar:setTabGroup",
+            type: MESSAGE_TYPES.SET_TAB_GROUP,
             payload: {
               tabId: tab.id,
               groupId: -1
@@ -2060,7 +1980,7 @@
       items.push(
         createContextMenuItem(`Move to group: ${groupName}`, () => {
           return sendMessage({
-            type: "sidebar:setTabGroup",
+            type: MESSAGE_TYPES.SET_TAB_GROUP,
             payload: {
               tabId: tab.id,
               groupId: group.id
@@ -2126,7 +2046,7 @@
     }
 
     await sendMessage({
-      type: "sidebar:setWindowOpen",
+      type: MESSAGE_TYPES.SET_WINDOW_OPEN,
       payload: {
         windowId,
         open: sidebarOpen
@@ -2259,7 +2179,7 @@
 
     focusedTabId = tabId;
     await sendMessage({
-      type: "sidebar:activateTab",
+      type: MESSAGE_TYPES.ACTIVATE_TAB,
       payload: { tabId }
     });
   }
@@ -2285,7 +2205,7 @@
     });
 
     await sendMessage({
-      type: "sidebar:closeTab",
+      type: MESSAGE_TYPES.CLOSE_TAB,
       payload: { tabId }
     });
   }
@@ -2308,7 +2228,7 @@
 
     focusedTabId = first.id;
     await sendMessage({
-      type: "sidebar:activateTab",
+      type: MESSAGE_TYPES.ACTIVATE_TAB,
       payload: { tabId: first.id }
     });
   }
@@ -2334,7 +2254,7 @@
     }
 
     await sendMessage({
-      type: "sidebar:moveTab",
+      type: MESSAGE_TYPES.MOVE_TAB,
       payload: {
         tabId: dragTabId,
         index: targetIndex
@@ -2380,7 +2300,7 @@
         onActivate: (tabId) => {
           focusedTabId = tabId;
           void sendMessage({
-            type: "sidebar:activateTab",
+            type: MESSAGE_TYPES.ACTIVATE_TAB,
             payload: { tabId }
           });
         },
@@ -2393,7 +2313,7 @@
           });
 
           void sendMessage({
-            type: "sidebar:closeTab",
+            type: MESSAGE_TYPES.CLOSE_TAB,
             payload: { tabId }
           });
         },
@@ -2507,7 +2427,7 @@
   }
 
   async function hydrateInitialState() {
-    const stateResponse = await sendMessage({ type: "sidebar:getState" });
+    const stateResponse = await sendMessage({ type: MESSAGE_TYPES.GET_STATE });
     await hydrateSidebarData();
 
     if (!stateResponse?.ok) {
@@ -2553,7 +2473,7 @@
 
   newTabButton.addEventListener("click", () => {
     void sendMessage({
-      type: "sidebar:createTab",
+      type: MESSAGE_TYPES.CREATE_TAB,
       payload: {
         windowId
       }
@@ -2562,7 +2482,7 @@
 
   newTabRowButton.addEventListener("click", () => {
     void sendMessage({
-      type: "sidebar:createTab",
+      type: MESSAGE_TYPES.CREATE_TAB,
       payload: {
         windowId
       }
@@ -2826,12 +2746,26 @@
       return;
     }
 
-    if (message.type === "sidebar:ping") {
+    const isKnownMessageType = messagesModule?.isKnownMessageType;
+    if (typeof isKnownMessageType === "function" && !isKnownMessageType(message.type)) {
+      return;
+    }
+
+    const validatePayload = messagesModule?.validatePayload;
+    if (typeof validatePayload === "function") {
+      const validation = validatePayload(message.type, message.payload);
+      if (!validation.ok) {
+        sendResponse({ ok: false, error: validation.error });
+        return;
+      }
+    }
+
+    if (message.type === MESSAGE_TYPES.PING) {
       sendResponse({ ok: true });
       return;
     }
 
-    if (message.type === "sidebar:state") {
+    if (message.type === MESSAGE_TYPES.STATE) {
       const payload = message.payload;
       if (
         Number.isInteger(windowId) &&
@@ -2846,7 +2780,7 @@
       return;
     }
 
-    if (message.type === "sidebar:setOpen") {
+    if (message.type === MESSAGE_TYPES.SET_OPEN) {
       const targetWindowId = message.payload?.windowId;
       if (
         Number.isInteger(windowId) &&
@@ -2865,7 +2799,7 @@
       return;
     }
 
-    if (message.type === "sidebar:toggleCommandPalette") {
+    if (message.type === MESSAGE_TYPES.TOGGLE_COMMAND_PALETTE) {
       const targetWindowId = message.payload?.windowId;
       if (
         Number.isInteger(windowId) &&
