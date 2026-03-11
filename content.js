@@ -20,6 +20,9 @@
   const commandPaletteDataModule = globalScope.BraveSidebarCommandPaletteData;
   const quickSwitcherModule = globalScope.BraveSidebarQuickSwitcher;
   const messagesModule = globalScope.BraveSidebarMessages;
+  const runtimeClientModule = globalScope.BraveSidebarRuntimeClient;
+  const arcModelModule = globalScope.BraveSidebarArcModel;
+  const contextMenuActionsModule = globalScope.BraveSidebarContextMenuActions;
 
   if (
     !searchModule ||
@@ -32,7 +35,10 @@
     !renderPerfModule ||
     !contextMenuModelModule ||
     !commandPaletteDataModule ||
-    !quickSwitcherModule
+    !quickSwitcherModule ||
+    !runtimeClientModule ||
+    !arcModelModule ||
+    !contextMenuActionsModule
   ) {
     return;
   }
@@ -68,6 +74,12 @@
     TOGGLE_COMMAND_PALETTE: "sidebar:toggleCommandPalette"
   };
 
+  const runtimeClient = runtimeClientModule.createRuntimeClient({
+    messagesModule,
+    chromeApi: chrome
+  });
+  const { storageGet, storageSet, sendMessage } = runtimeClient;
+
   let windowId = null;
   let sidebarWidth = DEFAULT_WIDTH;
   let sidebarOpen = false;
@@ -82,7 +94,6 @@
   let commandPaletteItems = [];
   let commandPaletteFocusedIndex = -1;
   let suppressPointerUntil = 0;
-  let runtimeContextAlive = true;
   let sidebarData = {
     spaces: [DEFAULT_SPACE],
     activeSpaceId: DEFAULT_SPACE.id,
@@ -239,126 +250,6 @@
   const commandInput = commandPaletteEl.querySelector("#bts-command-input");
   const commandList = commandPaletteEl.querySelector("#bts-command-list");
 
-  function storageGet(key) {
-    if (!runtimeContextAlive) {
-      return Promise.resolve(undefined);
-    }
-
-    return Promise.resolve()
-      .then(
-        () =>
-          new Promise((resolve, reject) => {
-            if (!chrome?.storage?.local?.get) {
-              reject(new Error("STORAGE_GET_UNAVAILABLE"));
-              return;
-            }
-            chrome.storage.local.get([key], (result) => {
-              const error = chrome.runtime?.lastError;
-              if (error) {
-                reject(new Error(error.message));
-                return;
-              }
-              resolve(result?.[key]);
-            });
-          })
-      )
-      .catch((error) => {
-        if (String(error?.message || "").includes("Extension context invalidated")) {
-          runtimeContextAlive = false;
-        }
-        return undefined;
-      });
-  }
-
-  function storageSet(key, value) {
-    if (!runtimeContextAlive) {
-      return Promise.resolve();
-    }
-
-    return Promise.resolve()
-      .then(
-        () =>
-          new Promise((resolve, reject) => {
-            if (!chrome?.storage?.local?.set) {
-              reject(new Error("STORAGE_SET_UNAVAILABLE"));
-              return;
-            }
-            chrome.storage.local.set({ [key]: value }, () => {
-              const error = chrome.runtime?.lastError;
-              if (error) {
-                reject(new Error(error.message));
-                return;
-              }
-              resolve();
-            });
-          })
-      )
-      .catch((error) => {
-        if (String(error?.message || "").includes("Extension context invalidated")) {
-          runtimeContextAlive = false;
-        }
-      });
-  }
-
-  function validateSidebarMessage(message) {
-    if (!message || typeof message !== "object") {
-      return { ok: false, error: "INVALID_MESSAGE" };
-    }
-
-    if (typeof message.type !== "string") {
-      return { ok: false, error: "INVALID_MESSAGE_TYPE" };
-    }
-
-    const isKnownMessageType = messagesModule?.isKnownMessageType;
-    if (typeof isKnownMessageType === "function" && !isKnownMessageType(message.type)) {
-      return { ok: false, error: "UNKNOWN_MESSAGE_TYPE" };
-    }
-
-    const validatePayload = messagesModule?.validatePayload;
-    if (typeof validatePayload !== "function") {
-      return { ok: true };
-    }
-
-    return validatePayload(message.type, message.payload);
-  }
-
-  function sendMessage(message) {
-    if (!runtimeContextAlive) {
-      return Promise.resolve({ ok: false, error: "EXTENSION_CONTEXT_INVALIDATED" });
-    }
-
-    const validation = validateSidebarMessage(message);
-    if (!validation.ok) {
-      return Promise.resolve({ ok: false, error: validation.error });
-    }
-
-    return Promise.resolve()
-      .then(
-        () =>
-          new Promise((resolve, reject) => {
-            if (!chrome?.runtime?.sendMessage) {
-              reject(new Error("RUNTIME_SEND_UNAVAILABLE"));
-              return;
-            }
-            chrome.runtime.sendMessage(message, (response) => {
-              const error = chrome.runtime?.lastError;
-              if (error) {
-                reject(new Error(error.message));
-                return;
-              }
-              resolve(response || { ok: false, error: "NO_RESPONSE" });
-            });
-          })
-      )
-      .catch((error) => {
-        const messageText = String(error?.message || "SEND_FAILED");
-        if (messageText.includes("Extension context invalidated")) {
-          runtimeContextAlive = false;
-        }
-        return { ok: false, error: messageText };
-      });
-  }
-
   function getSidebarDataSignature(value) {
     try {
       return JSON.stringify(value);
@@ -430,14 +321,11 @@
   }
 
   function getActiveSpace() {
-    const active = sidebarData.spaces.find((space) => space.id === sidebarData.activeSpaceId);
-    return active || sidebarData.spaces[0] || DEFAULT_SPACE;
+    return arcModelModule.getActiveSpace(sidebarData, DEFAULT_SPACE);
   }
 
   function getActiveSpacePinnedNodes() {
-    const activeSpace = getActiveSpace();
-    const items = sidebarData.pinnedBySpace[activeSpace.id];
-    return Array.isArray(items) ? items : [];
+    return arcModelModule.getActiveSpacePinnedNodes(sidebarData, DEFAULT_SPACE);
   }
 
   function isUrlInFavorites(url) {
@@ -480,31 +368,22 @@
       return;
     }
 
-    const key = normalizeUrlKey(item.url);
-    const existingIndex = sidebarData.favorites.findIndex(
-      (entry) => normalizeUrlKey(entry.url) === key
-    );
+    const result = arcModelModule.addFavoriteItem(sidebarData, item, {
+      normalizeUrlKey,
+      maxFavorites: MAX_FAVORITES
+    });
 
-    if (existingIndex >= 0) {
-      sidebarData.favorites[existingIndex] = {
-        ...sidebarData.favorites[existingIndex],
-        title: item.title,
-        favIconUrl: item.favIconUrl || sidebarData.favorites[existingIndex].favIconUrl
-      };
-    } else {
-      if (sidebarData.favorites.length >= MAX_FAVORITES) {
-        return;
-      }
-      sidebarData.favorites.push(item);
+    if (!result.changed) {
+      return;
     }
 
+    sidebarData.favorites = result.favorites;
     await persistSidebarData();
   }
 
   async function removeFavoriteByUrl(url) {
-    const key = normalizeUrlKey(url);
-    sidebarData.favorites = sidebarData.favorites.filter(
-      (item) => normalizeUrlKey(item.url) !== key
+    sidebarData.favorites = arcModelModule.removeFavoriteByUrl(
+      sidebarData.favorites, url, normalizeUrlKey
     );
     await persistSidebarData();
   }
@@ -515,63 +394,21 @@
       return;
     }
 
-    const activeSpace = getActiveSpace();
-    const currentItems = getActiveSpacePinnedNodes().slice();
-    const key = normalizeUrlKey(item.url);
-
-    const updated = updatePinnedLinkByUrl(currentItems, key, (existing) => {
-      existing.title = item.title;
-      existing.favIconUrl = item.favIconUrl || existing.favIconUrl;
+    const result = arcModelModule.pinSavedItemInActiveSpace(sidebarData, item, {
+      normalizeUrlKey,
+      defaultSpace: DEFAULT_SPACE,
+      updatePinnedLinkByUrl,
+      createPinnedLinkNodeFromSavedItem
     });
 
-    if (!updated) {
-      currentItems.push(createPinnedLinkNodeFromSavedItem(item));
-    }
-
-    sidebarData.pinnedBySpace[activeSpace.id] = currentItems;
+    sidebarData.pinnedBySpace[result.spaceId] = result.nodes;
     await persistSidebarData();
-  }
-
-  function removePinnedLinkByIdFromNodes(nodes, linkId) {
-    let removed = false;
-    const next = [];
-
-    for (const node of nodes) {
-      if (node?.type === "link") {
-        if (node.id === linkId) {
-          removed = true;
-          continue;
-        }
-        next.push(node);
-        continue;
-      }
-
-      if (node?.type === "folder" && Array.isArray(node.children)) {
-        const children = node.children.filter((child) => {
-          if (child.id === linkId) {
-            removed = true;
-            return false;
-          }
-          return true;
-        });
-
-        next.push({
-          ...node,
-          children
-        });
-        continue;
-      }
-
-      next.push(node);
-    }
-
-    return { next, removed };
   }
 
   async function removePinnedLinkById(linkId) {
     const activeSpace = getActiveSpace();
     const currentItems = getActiveSpacePinnedNodes();
-    const { next, removed } = removePinnedLinkByIdFromNodes(currentItems, linkId);
+    const { next, removed } = arcModelModule.removePinnedLinkByIdFromNodes(currentItems, linkId);
     if (!removed) {
       return;
     }
@@ -582,25 +419,10 @@
 
   async function unpinUrlInActiveSpace(url) {
     const activeSpace = getActiveSpace();
-    const key = normalizeUrlKey(url);
-    const currentItems = getActiveSpacePinnedNodes()
-      .map((node) => {
-        if (node?.type === "link") {
-          return normalizeUrlKey(node.url) === key ? null : node;
-        }
-
-        if (node?.type === "folder" && Array.isArray(node.children)) {
-          return {
-            ...node,
-            children: node.children.filter((child) => normalizeUrlKey(child.url) !== key)
-          };
-        }
-
-        return node;
-      })
-      .filter(Boolean);
-
-    sidebarData.pinnedBySpace[activeSpace.id] = currentItems;
+    const nodes = getActiveSpacePinnedNodes();
+    sidebarData.pinnedBySpace[activeSpace.id] = arcModelModule.unpinUrlFromNodes(
+      nodes, url, normalizeUrlKey
+    );
     await persistSidebarData();
   }
 
@@ -982,45 +804,6 @@
     renderTabList();
   }
 
-  function extractPinnedLinkByUrl(nodes, urlKey, targetFolderId) {
-    let extracted = null;
-
-    const nextNodes = nodes
-      .map((node) => {
-        if (node?.type === "link") {
-          if (normalizeUrlKey(node.url) === urlKey) {
-            extracted = node;
-            return null;
-          }
-          return node;
-        }
-
-        if (node?.type === "folder" && Array.isArray(node.children)) {
-          const children = node.children.filter((child) => {
-            const isMatch = normalizeUrlKey(child.url) === urlKey;
-            if (isMatch && node.id !== targetFolderId) {
-              extracted = child;
-              return false;
-            }
-            return true;
-          });
-
-          return {
-            ...node,
-            children
-          };
-        }
-
-        return node;
-      })
-      .filter(Boolean);
-
-    return {
-      nextNodes,
-      extracted
-    };
-  }
-
   async function pinSnapshotTabToFolder(tabId, folderId) {
     const tab = getSnapshotTabById(tabId);
     if (!tab) {
@@ -1035,42 +818,16 @@
 
     const activeSpace = getActiveSpace();
     const currentItems = getActiveSpacePinnedNodes().slice();
-    const targetFolder = currentItems.find(
-      (node) => node?.type === "folder" && node.id === folderId
-    );
+    const result = arcModelModule.pinItemToFolder(currentItems, item, folderId, {
+      normalizeUrlKey,
+      createPinnedLinkNodeFromSavedItem
+    });
 
-    if (!targetFolder) {
+    if (!result.changed) {
       return;
     }
 
-    const key = normalizeUrlKey(item.url);
-    const { nextNodes, extracted } = extractPinnedLinkByUrl(currentItems, key, folderId);
-    const folderInNext = nextNodes.find((node) => node?.type === "folder" && node.id === folderId);
-    if (!folderInNext) {
-      return;
-    }
-
-    const existingChild = folderInNext.children.find(
-      (child) => normalizeUrlKey(child.url) === key
-    );
-
-    if (existingChild) {
-      existingChild.title = item.title;
-      existingChild.favIconUrl = item.favIconUrl || existingChild.favIconUrl;
-    } else {
-      const nodeToInsert = extracted
-        ? {
-            ...extracted,
-            title: item.title,
-            favIconUrl: item.favIconUrl || extracted.favIconUrl,
-            type: "link"
-          }
-        : createPinnedLinkNodeFromSavedItem(item);
-
-      folderInNext.children.push(nodeToInsert);
-    }
-
-    sidebarData.pinnedBySpace[activeSpace.id] = nextNodes;
+    sidebarData.pinnedBySpace[activeSpace.id] = result.nodes;
     await persistSidebarData();
     renderTabList();
   }
@@ -1393,9 +1150,10 @@
       name: `Space ${index}`,
       icon: "•"
     };
-    sidebarData.spaces.push(newSpace);
-    sidebarData.pinnedBySpace[newSpace.id] = [];
-    sidebarData.activeSpaceId = newSpace.id;
+    const result = arcModelModule.addSpace(sidebarData, newSpace);
+    sidebarData.spaces = result.spaces;
+    sidebarData.pinnedBySpace = result.pinnedBySpace;
+    sidebarData.activeSpaceId = result.activeSpaceId;
     await persistSidebarData();
     renderTabList();
   }
@@ -1748,112 +1506,21 @@
   }
 
   async function executeContextMenuAction(actionId, tab, options = {}) {
-    const tabUrl = options.tabUrl;
-    const groupId = options.groupId;
+    const result = await contextMenuActionsModule.executeTabAction(actionId, {
+      tab,
+      tabUrl: options.tabUrl,
+      groupId: options.groupId,
+      sendMessage,
+      resolveTabForStorage,
+      addTabToFavorites,
+      removeFavoriteByUrl,
+      pinTabInActiveSpace,
+      unpinUrlInActiveSpace,
+      MESSAGE_TYPES
+    });
 
-    if (actionId === "remove-from-favorites") {
-      await removeFavoriteByUrl(tabUrl);
+    if (result?.shouldRender) {
       renderTabList();
-      return;
-    }
-
-    if (actionId === "add-to-favorites") {
-      const resolvedTab = await resolveTabForStorage(tab);
-      await addTabToFavorites(resolvedTab);
-      renderTabList();
-      return;
-    }
-
-    if (actionId === "unpin-from-sidebar") {
-      await unpinUrlInActiveSpace(tabUrl);
-      renderTabList();
-      return;
-    }
-
-    if (actionId === "pin-to-sidebar") {
-      const resolvedTab = await resolveTabForStorage(tab);
-      await pinTabInActiveSpace(resolvedTab);
-      renderTabList();
-      return;
-    }
-
-    if (actionId === "toggle-tab-pin") {
-      await sendMessage({
-        type: MESSAGE_TYPES.UPDATE_TAB,
-        payload: {
-          tabId: tab.id,
-          update: { pinned: !tab.pinned }
-        }
-      });
-      return;
-    }
-
-    if (actionId === "toggle-tab-mute") {
-      await sendMessage({
-        type: MESSAGE_TYPES.UPDATE_TAB,
-        payload: {
-          tabId: tab.id,
-          update: { muted: !tab.muted }
-        }
-      });
-      return;
-    }
-
-    if (actionId === "duplicate-tab") {
-      await sendMessage({
-        type: MESSAGE_TYPES.DUPLICATE_TAB,
-        payload: { tabId: tab.id }
-      });
-      return;
-    }
-
-    if (actionId === "close-other-tabs") {
-      await sendMessage({
-        type: MESSAGE_TYPES.CLOSE_OTHER_TABS,
-        payload: { tabId: tab.id }
-      });
-      return;
-    }
-
-    if (actionId === "close-tab") {
-      await sendMessage({
-        type: MESSAGE_TYPES.CLOSE_TAB,
-        payload: { tabId: tab.id }
-      });
-      return;
-    }
-
-    if (actionId === "move-to-new-group") {
-      await sendMessage({
-        type: MESSAGE_TYPES.SET_TAB_GROUP,
-        payload: {
-          tabId: tab.id,
-          createNew: true,
-          title: "New Group"
-        }
-      });
-      return;
-    }
-
-    if (actionId === "remove-from-group") {
-      await sendMessage({
-        type: MESSAGE_TYPES.SET_TAB_GROUP,
-        payload: {
-          tabId: tab.id,
-          groupId: -1
-        }
-      });
-      return;
-    }
-
-    if (actionId === "move-to-group" && Number.isInteger(groupId)) {
-      await sendMessage({
-        type: MESSAGE_TYPES.SET_TAB_GROUP,
-        payload: {
-          tabId: tab.id,
-          groupId
-        }
-      });
     }
   }
 
@@ -2743,7 +2410,7 @@
     const reason = event?.reason;
     const message = String(reason?.message || reason || "");
     if (message.includes("Extension context invalidated")) {
-      runtimeContextAlive = false;
+      runtimeClient.markContextInvalidated();
       event.preventDefault();
     }
   });
