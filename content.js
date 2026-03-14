@@ -49,7 +49,7 @@
   const DEFAULT_SPACE = {
     id: "space-personal",
     name: "Personal",
-    icon: "🪼"
+    icon: "•"
   };
   const DEFAULT_WIDTH = 280;
   const MIN_WIDTH = 200;
@@ -73,6 +73,135 @@
     SET_OPEN: "sidebar:setOpen",
     TOGGLE_COMMAND_PALETTE: "sidebar:toggleCommandPalette"
   };
+  const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+  const CONTENT_ICON_PATHS = Object.freeze({
+    plus: [
+      { tag: "path", attrs: { d: "M10 4.5v11" } },
+      { tag: "path", attrs: { d: "M4.5 10h11" } }
+    ],
+    chevronLeft: [{ tag: "path", attrs: { d: "M12.75 4.75 7.5 10l5.25 5.25" } }],
+    chevronRight: [{ tag: "path", attrs: { d: "M7.25 4.75 12.5 10l-5.25 5.25" } }],
+    chevronDown: [{ tag: "path", attrs: { d: "M4.75 7.5 10 12.75 15.25 7.5" } }],
+    sidebarPanel: [
+      { tag: "rect", attrs: { x: "3.5", y: "4.5", width: "13", height: "11", rx: "2.5" } },
+      { tag: "path", attrs: { d: "M8 4.5v11" } },
+      { tag: "path", attrs: { d: "M11 7.75h2.5" } },
+      { tag: "path", attrs: { d: "M11 10h2.5" } },
+      { tag: "path", attrs: { d: "M11 12.25h2.5" } }
+    ],
+    pencil: [
+      {
+        tag: "path",
+        attrs: {
+          d: "M4.75 15.25 6.6 10.9 12.9 4.6a1.55 1.55 0 0 1 2.2 0l.3.3a1.55 1.55 0 0 1 0 2.2l-6.3 6.3-4.35 1.85Z"
+        }
+      },
+      { tag: "path", attrs: { d: "M11.85 5.65 14.35 8.15" } }
+    ],
+    close: [
+      { tag: "path", attrs: { d: "M5.5 5.5 14.5 14.5" } },
+      { tag: "path", attrs: { d: "M14.5 5.5 5.5 14.5" } }
+    ],
+    search: [
+      { tag: "circle", attrs: { cx: "8.5", cy: "8.5", r: "4.75" } },
+      { tag: "path", attrs: { d: "M12.5 12.5 16 16" } }
+    ],
+    palette: [
+      { tag: "circle", attrs: { cx: "10", cy: "10", r: "6.25" } },
+      { tag: "circle", attrs: { cx: "8", cy: "8", r: "1.5", fill: "currentColor", stroke: "none" } },
+      { tag: "circle", attrs: { cx: "12.2", cy: "8.4", r: "1.2", fill: "currentColor", stroke: "none" } },
+      { tag: "circle", attrs: { cx: "10", cy: "12.4", r: "1.3", fill: "currentColor", stroke: "none" } }
+    ]
+  });
+
+  function createIcon(name, className = "bts-icon") {
+    const iconDef = CONTENT_ICON_PATHS[name];
+    const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+    svg.setAttribute("viewBox", "0 0 20 20");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    svg.setAttribute("class", className);
+
+    if (!iconDef) {
+      return svg;
+    }
+
+    for (const definition of iconDef) {
+      const part = document.createElementNS(SVG_NAMESPACE, definition.tag);
+      for (const [key, value] of Object.entries(definition.attrs || {})) {
+        part.setAttribute(key, value);
+      }
+      svg.append(part);
+    }
+
+    return svg;
+  }
+
+  function setIconOnlyButton(button, iconName) {
+    if (!button) {
+      return;
+    }
+
+    button.replaceChildren(createIcon(iconName));
+  }
+
+  function setIconLabelButton(button, iconName, label) {
+    if (!button) {
+      return;
+    }
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "bts-button-label";
+    labelEl.textContent = label;
+    button.replaceChildren(createIcon(iconName), labelEl);
+  }
+
+  function getItemDisplayLabel(item) {
+    const title = String(item?.title || "").trim();
+    if (title) {
+      return title;
+    }
+
+    const url = String(item?.url || "").trim();
+    if (!url) {
+      return "Untitled";
+    }
+
+    try {
+      return new URL(url).hostname.replace(/^www\./i, "") || url;
+    } catch {
+      return url;
+    }
+  }
+
+  function getItemMonogram(item) {
+    const match = getItemDisplayLabel(item).match(/[A-Za-z0-9]/);
+    return match ? match[0].toUpperCase() : "#";
+  }
+
+  const FAVORITE_TINT_PALETTE = [
+    { bg: "rgba(235, 87, 87, 0.14)", border: "rgba(235, 87, 87, 0.22)" },
+    { bg: "rgba(242, 153, 74, 0.14)", border: "rgba(242, 153, 74, 0.22)" },
+    { bg: "rgba(242, 201, 76, 0.12)", border: "rgba(242, 201, 76, 0.20)" },
+    { bg: "rgba(39, 174, 96, 0.12)", border: "rgba(39, 174, 96, 0.20)" },
+    { bg: "rgba(47, 128, 237, 0.14)", border: "rgba(47, 128, 237, 0.22)" },
+    { bg: "rgba(155, 81, 224, 0.14)", border: "rgba(155, 81, 224, 0.22)" },
+    { bg: "rgba(235, 107, 148, 0.14)", border: "rgba(235, 107, 148, 0.22)" },
+    { bg: "rgba(86, 204, 242, 0.12)", border: "rgba(86, 204, 242, 0.20)" },
+    { bg: "rgba(111, 207, 151, 0.12)", border: "rgba(111, 207, 151, 0.20)" },
+    { bg: "rgba(219, 170, 107, 0.14)", border: "rgba(219, 170, 107, 0.22)" },
+    { bg: "rgba(126, 139, 168, 0.14)", border: "rgba(126, 139, 168, 0.22)" },
+    { bg: "rgba(196, 113, 237, 0.14)", border: "rgba(196, 113, 237, 0.22)" }
+  ];
+
+  function getFavoriteTint(url) {
+    const str = String(url || "");
+    let hash = 0;
+    for (let i = 0; i < str.length; i += 1) {
+      hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+    }
+    return FAVORITE_TINT_PALETTE[Math.abs(hash) % FAVORITE_TINT_PALETTE.length];
+  }
 
   const runtimeClient = runtimeClientModule.createRuntimeClient({
     messagesModule,
@@ -205,11 +334,13 @@
 
   sidebarEl.innerHTML = `
     <div class="bts-toolbar">
-      <button id="bts-toggle-btn" class="bts-icon-btn" type="button" aria-label="Hide sidebar">❮</button>
-      <button id="bts-new-tab-btn" class="bts-icon-btn" type="button" aria-label="New tab" title="New tab">＋</button>
+      <button id="bts-toggle-btn" class="bts-icon-btn bts-toolbar-panel-btn" type="button" aria-label="Hide sidebar">Toggle</button>
+      <button id="bts-theme-btn" class="bts-icon-btn" type="button" aria-label="Theme" title="Customize theme">Theme</button>
+      <button id="bts-search-toggle-btn" class="bts-icon-btn bts-toolbar-search-btn" type="button" aria-label="Search tabs" title="Search tabs">Search</button>
+      <button id="bts-new-tab-btn" class="bts-icon-btn" type="button" aria-label="New tab" title="New tab">New</button>
     </div>
-    <div class="bts-search-wrap">
-      <input id="bts-search-input" class="bts-search-input" type="search" placeholder="Search tabs by title or URL" />
+    <div class="bts-search-wrap bts-search-collapsed">
+      <input id="bts-search-input" class="bts-search-input" type="search" placeholder="Search tabs..." />
     </div>
     <div class="bts-favorites-wrap">
       <div id="bts-favorites-grid" class="bts-favorites-grid"></div>
@@ -217,26 +348,51 @@
     <div class="bts-space-header">
       <span id="bts-space-icon" class="bts-space-icon">${DEFAULT_SPACE.icon}</span>
       <span id="bts-space-name" class="bts-space-name">${DEFAULT_SPACE.name}</span>
-      <button id="bts-new-folder-btn" class="bts-folder-add-btn" type="button">＋ Folder</button>
+      <button id="bts-new-folder-btn" class="bts-folder-add-btn" type="button">New Folder</button>
     </div>
     <div id="bts-pinned-list" class="bts-pinned-list"></div>
-    <button id="bts-new-tab-row" class="bts-new-tab-row" type="button">＋ New Tab</button>
+    <button id="bts-new-tab-row" class="bts-new-tab-row" type="button">New Tab</button>
     <div class="bts-today-title">Today</div>
     <div id="bts-tab-list" class="bts-tab-list" aria-live="polite"></div>
     <div class="bts-spaces-dock">
       <div id="bts-spaces-list" class="bts-spaces-list"></div>
-      <button id="bts-add-space-btn" class="bts-space-add-btn" type="button" aria-label="Add space" title="Add space">＋</button>
+      <button id="bts-add-space-btn" class="bts-space-add-btn" type="button" aria-label="Add space" title="Add space">Add</button>
     </div>
     <div id="bts-resize-handle" class="bts-resize-handle" title="Resize sidebar" role="separator" aria-orientation="vertical"></div>
+    <div id="bts-theme-editor" class="bts-theme-editor" aria-hidden="true">
+      <div class="bts-theme-editor-header">
+        <span class="bts-theme-editor-title">Theme</span>
+        <button id="bts-theme-close" class="bts-icon-btn" type="button" aria-label="Close theme editor">Close</button>
+      </div>
+      <div class="bts-theme-presets" id="bts-theme-presets"></div>
+      <div class="bts-theme-colors">
+        <label class="bts-theme-color-label">Mesh Colors
+          <div class="bts-theme-color-row" id="bts-theme-color-row"></div>
+        </label>
+      </div>
+      <div class="bts-theme-sliders">
+        <label class="bts-theme-slider-label">Grain
+          <input id="bts-grain-slider" class="bts-theme-slider" type="range" min="0" max="100" value="52" />
+        </label>
+      </div>
+    </div>
   `;
 
   shadowRoot.append(fallbackStyleEl, linkEl, overlayEl, sidebarEl, contextMenuEl, commandPaletteEl);
   document.documentElement.append(host);
 
   const toggleButton = sidebarEl.querySelector("#bts-toggle-btn");
+  const themeButton = sidebarEl.querySelector("#bts-theme-btn");
+  const searchToggleButton = sidebarEl.querySelector("#bts-search-toggle-btn");
   const newTabButton = sidebarEl.querySelector("#bts-new-tab-btn");
+  const themeEditor = sidebarEl.querySelector("#bts-theme-editor");
+  const themeCloseButton = sidebarEl.querySelector("#bts-theme-close");
+  const themeColorRow = sidebarEl.querySelector("#bts-theme-color-row");
+  const themePresetsContainer = sidebarEl.querySelector("#bts-theme-presets");
+  const grainSlider = sidebarEl.querySelector("#bts-grain-slider");
   const newTabRowButton = sidebarEl.querySelector("#bts-new-tab-row");
   const searchInput = sidebarEl.querySelector("#bts-search-input");
+  const searchWrap = sidebarEl.querySelector(".bts-search-wrap");
   const favoritesGrid = sidebarEl.querySelector("#bts-favorites-grid");
   const spaceIconEl = sidebarEl.querySelector("#bts-space-icon");
   const spaceNameEl = sidebarEl.querySelector("#bts-space-name");
@@ -249,6 +405,173 @@
   const commandBackdrop = commandPaletteEl.querySelector(".bts-command-backdrop");
   const commandInput = commandPaletteEl.querySelector("#bts-command-input");
   const commandList = commandPaletteEl.querySelector("#bts-command-list");
+
+  setIconOnlyButton(toggleButton, "sidebarPanel");
+  setIconOnlyButton(themeButton, "palette");
+  setIconOnlyButton(searchToggleButton, "search");
+  setIconOnlyButton(newTabButton, "plus");
+  setIconOnlyButton(themeCloseButton, "close");
+  setIconLabelButton(newFolderButton, "plus", "New Folder");
+  setIconLabelButton(newTabRowButton, "plus", "New Tab");
+  setIconOnlyButton(addSpaceButton, "plus");
+
+  const THEME_STORAGE_KEY = "bts_theme_v1";
+  const THEME_MESH_KEYS = ["a", "b", "c", "d", "e"];
+  const THEME_PRESETS = [
+    { name: "Sand", mesh: { a: "#c8bfb4", b: "#d9c4a0", c: "#c4a882", d: "#b8ac9e", e: "#ddd5c8" }, grain: 52 },
+    { name: "Ocean", mesh: { a: "#7ba7c4", b: "#5b8fad", c: "#3d6e8e", d: "#9fc4d8", e: "#b5d4e3" }, grain: 48 },
+    { name: "Forest", mesh: { a: "#8baa7a", b: "#6e9464", c: "#a3b88e", d: "#c4cdb4", e: "#d2dbc6" }, grain: 50 },
+    { name: "Dusk", mesh: { a: "#b89aaf", b: "#9a7a96", c: "#d4a88c", d: "#c4b0c4", e: "#ddd0d8" }, grain: 45 },
+    { name: "Ember", mesh: { a: "#d4926a", b: "#c47852", c: "#b86040", d: "#dbb090", e: "#e8cbb4" }, grain: 55 },
+    { name: "Slate", mesh: { a: "#8e9aaa", b: "#6e7e90", c: "#a4b0be", d: "#bcc4d0", e: "#d0d6de" }, grain: 40 },
+    { name: "Midnight", mesh: { a: "#2a2836", b: "#1e2230", c: "#342e40", d: "#22202c", e: "#1a1824" }, grain: 34 },
+    { name: "Charcoal", mesh: { a: "#2e2c2a", b: "#383432", c: "#26221e", d: "#3a3634", e: "#1e1a18" }, grain: 30 }
+  ];
+
+  let currentTheme = {
+    mesh: { ...THEME_PRESETS[0].mesh },
+    grain: THEME_PRESETS[0].grain
+  };
+
+  function applyThemeToDOM(theme) {
+    const s = sidebarEl.style;
+    for (const key of THEME_MESH_KEYS) {
+      s.setProperty("--bts-mesh-" + key, theme.mesh[key]);
+    }
+    s.setProperty("--bts-noise-opacity", String(theme.grain / 100));
+  }
+
+  function autoTextColors(theme) {
+    const hex = theme.mesh.e || "#ddd5c8";
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    const isDark = luminance < 0.45;
+    const s = sidebarEl.style;
+    if (isDark) {
+      s.setProperty("--bts-sidebar-text", "#f5ede4");
+      s.setProperty("--bts-sidebar-muted", "#b9a395");
+      s.setProperty("--bts-sidebar-hover", "rgba(255,255,255,0.08)");
+      s.setProperty("--bts-sidebar-active", "rgba(255,255,255,0.14)");
+      s.setProperty("--bts-sidebar-surface", "rgba(255,255,255,0.06)");
+      s.setProperty("--bts-sidebar-border", "rgba(255,230,215,0.06)");
+    } else {
+      s.setProperty("--bts-sidebar-text", "#2c211c");
+      s.setProperty("--bts-sidebar-muted", "#7d695c");
+      s.setProperty("--bts-sidebar-hover", "rgba(255,255,255,0.32)");
+      s.setProperty("--bts-sidebar-active", "rgba(255,255,255,0.48)");
+      s.setProperty("--bts-sidebar-surface", "rgba(255,255,255,0.22)");
+      s.setProperty("--bts-sidebar-border", "rgba(134,105,88,0.14)");
+    }
+  }
+
+  async function persistTheme(theme) {
+    currentTheme = theme;
+    applyThemeToDOM(theme);
+    autoTextColors(theme);
+    await storageSet(THEME_STORAGE_KEY, theme);
+  }
+
+  async function hydrateTheme() {
+    const stored = await storageGet(THEME_STORAGE_KEY);
+    if (stored && typeof stored === "object" && stored.mesh) {
+      currentTheme = {
+        mesh: { ...THEME_PRESETS[0].mesh, ...stored.mesh },
+        grain: Number.isFinite(stored.grain) ? stored.grain : 52
+      };
+    }
+    applyThemeToDOM(currentTheme);
+    autoTextColors(currentTheme);
+  }
+
+  function buildThemeEditorUI() {
+    themePresetsContainer.replaceChildren();
+    for (const preset of THEME_PRESETS) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "bts-theme-preset-btn";
+      btn.title = preset.name;
+
+      const swatch = document.createElement("span");
+      swatch.className = "bts-theme-preset-swatch";
+      swatch.style.background = `linear-gradient(135deg, ${preset.mesh.a}, ${preset.mesh.b}, ${preset.mesh.c})`;
+
+      const label = document.createElement("span");
+      label.className = "bts-theme-preset-name";
+      label.textContent = preset.name;
+
+      btn.append(swatch, label);
+      btn.addEventListener("click", () => {
+        void persistTheme({ mesh: { ...preset.mesh }, grain: preset.grain });
+        syncThemeEditorUI();
+      });
+      themePresetsContainer.append(btn);
+    }
+
+    themeColorRow.replaceChildren();
+    for (const key of THEME_MESH_KEYS) {
+      const input = document.createElement("input");
+      input.type = "color";
+      input.className = "bts-theme-color-input";
+      input.dataset.meshKey = key;
+      input.value = currentTheme.mesh[key];
+      input.addEventListener("input", () => {
+        currentTheme.mesh[key] = input.value;
+        applyThemeToDOM(currentTheme);
+        autoTextColors(currentTheme);
+      });
+      input.addEventListener("change", () => {
+        void persistTheme({ ...currentTheme });
+      });
+      themeColorRow.append(input);
+    }
+
+    grainSlider.value = String(currentTheme.grain);
+    grainSlider.addEventListener("input", () => {
+      currentTheme.grain = Number(grainSlider.value);
+      sidebarEl.style.setProperty("--bts-noise-opacity", String(currentTheme.grain / 100));
+    });
+    grainSlider.addEventListener("change", () => {
+      void persistTheme({ ...currentTheme });
+    });
+  }
+
+  function syncThemeEditorUI() {
+    const colorInputs = themeColorRow.querySelectorAll(".bts-theme-color-input");
+    for (const input of colorInputs) {
+      const key = input.dataset.meshKey;
+      if (key && currentTheme.mesh[key]) {
+        input.value = currentTheme.mesh[key];
+      }
+    }
+    grainSlider.value = String(currentTheme.grain);
+  }
+
+  function openThemeEditor() {
+    syncThemeEditorUI();
+    themeEditor.classList.add("is-open");
+    themeEditor.setAttribute("aria-hidden", "false");
+  }
+
+  function closeThemeEditor() {
+    themeEditor.classList.remove("is-open");
+    themeEditor.setAttribute("aria-hidden", "true");
+  }
+
+  themeButton.addEventListener("click", () => {
+    if (themeEditor.classList.contains("is-open")) {
+      closeThemeEditor();
+    } else {
+      openThemeEditor();
+    }
+  });
+
+  themeCloseButton.addEventListener("click", () => {
+    closeThemeEditor();
+  });
+
+  buildThemeEditorUI();
 
   function getSidebarDataSignature(value) {
     try {
@@ -503,6 +826,18 @@
     });
 
     if (options.favorite) {
+      const tint = getFavoriteTint(item.url);
+      button.style.setProperty("--fav-tint-bg", tint.bg);
+      button.style.setProperty("--fav-tint-border", tint.border);
+
+      const media = document.createElement("span");
+      media.className = "bts-favorite-media";
+
+      const monogram = document.createElement("span");
+      monogram.className = "bts-favorite-monogram";
+      monogram.textContent = getItemMonogram(item);
+
+      media.append(monogram, favicon);
       button.draggable = true;
       button.addEventListener("dragstart", (event) => {
         dragDropController.beginFavoriteDrag(item.id);
@@ -517,7 +852,7 @@
         button.classList.remove("is-dragging");
         clearDragDropVisualState();
       });
-      button.append(favicon);
+      button.append(media);
       return button;
     }
 
@@ -528,8 +863,9 @@
     const removeButton = document.createElement("button");
     removeButton.type = "button";
     removeButton.className = "bts-pinned-remove";
-    removeButton.textContent = "×";
     removeButton.title = "Unpin";
+    removeButton.setAttribute("aria-label", "Unpin");
+    removeButton.append(createIcon("close"));
     removeButton.addEventListener("click", (event) => {
       event.stopPropagation();
       if (typeof options.onRemove === "function") {
@@ -846,7 +1182,7 @@
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "bts-folder-toggle";
-    toggle.textContent = folder.collapsed ? "▸" : "▾";
+    toggle.append(createIcon(folder.collapsed ? "chevronRight" : "chevronDown"));
     toggle.addEventListener("click", async () => {
       await togglePinnedFolderCollapsed(folder.id);
       renderArcSections();
@@ -863,8 +1199,9 @@
     const rename = document.createElement("button");
     rename.type = "button";
     rename.className = "bts-folder-rename";
-    rename.textContent = "✎";
     rename.title = "Rename folder";
+    rename.setAttribute("aria-label", "Rename folder");
+    rename.append(createIcon("pencil"));
     rename.addEventListener("click", async (event) => {
       event.stopPropagation();
       await renamePinnedFolder(folder.id);
@@ -956,6 +1293,7 @@
 
     for (const item of sidebarData.favorites) {
       const button = createSavedItemButton(item, { favorite: true });
+      button.setAttribute("aria-label", item.title || item.url || "Favorite");
       favoritesGrid.append(button);
     }
 
@@ -995,11 +1333,13 @@
     const activeSpace = getActiveSpace();
     spaceNameEl.textContent = activeSpace.name;
     spaceIconEl.textContent = activeSpace.icon || "•";
+    spaceIconEl.dataset.spaceIcon = String(activeSpace.icon || "•");
 
     for (const space of sidebarData.spaces) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "bts-space-dot";
+      button.dataset.spaceIcon = String(space.icon || "•");
       if (space.id === activeSpace.id) {
         button.classList.add("is-active");
       }
@@ -1167,9 +1507,9 @@
   }
 
   function updateToggleButton() {
-    toggleButton.textContent = sidebarOpen ? "❮" : "❯";
     toggleButton.title = sidebarOpen ? "Hide sidebar" : "Show sidebar";
     toggleButton.setAttribute("aria-label", sidebarOpen ? "Hide sidebar" : "Show sidebar");
+    setIconOnlyButton(toggleButton, "sidebarPanel");
   }
 
   function syncOpenClasses() {
@@ -1231,6 +1571,7 @@
       row.type = "button";
       row.className = "bts-command-item";
       row.dataset.commandIndex = String(index);
+      row.dataset.commandType = String(item.type || "action");
       row.setAttribute("role", "option");
       row.setAttribute("aria-selected", index === commandPaletteFocusedIndex ? "true" : "false");
       if (index === commandPaletteFocusedIndex) {
@@ -1299,8 +1640,7 @@
     }
 
     if (item.command === "focus-search") {
-      searchInput.focus();
-      searchInput.select();
+      expandSearch();
       return;
     }
 
@@ -1999,6 +2339,7 @@
 
   async function hydrateInitialState() {
     const stateResponse = await sendMessage({ type: MESSAGE_TYPES.GET_STATE });
+    await hydrateTheme();
     await hydrateSidebarData();
 
     if (!stateResponse?.ok) {
@@ -2070,10 +2411,39 @@
     void addSpace();
   });
 
+  function expandSearch() {
+    searchWrap.classList.remove("bts-search-collapsed");
+    requestAnimationFrame(() => {
+      searchInput.focus();
+      searchInput.select();
+    });
+  }
+
+  function collapseSearch() {
+    searchQuery = "";
+    searchInput.value = "";
+    searchWrap.classList.add("bts-search-collapsed");
+    renderTabList();
+  }
+
+  searchToggleButton.addEventListener("click", () => {
+    if (searchWrap.classList.contains("bts-search-collapsed")) {
+      expandSearch();
+    } else {
+      collapseSearch();
+    }
+  });
+
   searchInput.addEventListener("input", () => {
     searchQuery = searchInput.value || "";
     closeContextMenu();
     renderTabList();
+  });
+
+  searchInput.addEventListener("blur", () => {
+    if (!searchQuery.trim()) {
+      collapseSearch();
+    }
   });
 
   searchInput.addEventListener("keydown", (event) => {
@@ -2094,11 +2464,8 @@
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      if (searchQuery) {
-        searchQuery = "";
-        searchInput.value = "";
-        renderTabList();
-      } else {
+      collapseSearch();
+      if (!searchQuery) {
         setOpen(false, { persist: true, broadcast: true, animate: true });
       }
     }
@@ -2223,17 +2590,14 @@
 
     if (metaOrCtrl && normalizedKey === "f") {
       event.preventDefault();
-      searchInput.focus();
-      searchInput.select();
+      expandSearch();
       return;
     }
 
     if (event.key === "Escape") {
       event.preventDefault();
-      if (searchQuery) {
-        searchQuery = "";
-        searchInput.value = "";
-        renderTabList();
+      if (searchQuery || !searchWrap.classList.contains("bts-search-collapsed")) {
+        collapseSearch();
         return;
       }
 
