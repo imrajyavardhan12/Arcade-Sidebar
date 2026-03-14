@@ -39,6 +39,9 @@ const INJECT_FILES = [
   "sidebar/context-menu-model.js",
   "sidebar/command-palette-data.js",
   "sidebar/quick-switcher.js",
+  "sidebar/runtime-client.js",
+  "sidebar/arc-model.js",
+  "sidebar/context-menu-actions.js",
   "content.js"
 ];
 const broadcastTimers = new Map();
