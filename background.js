@@ -4,6 +4,17 @@ const INJECT_FILES = [
   "sidebar/search.js",
   "sidebar/groups.js",
   "sidebar/tabs.js",
+  "sidebar/sidebar-data.js",
+  "sidebar/drag-state.js",
+  "sidebar/drag-drop-controller.js",
+  "sidebar/keyboard-nav.js",
+  "sidebar/render-perf.js",
+  "sidebar/context-menu-model.js",
+  "sidebar/command-palette-data.js",
+  "sidebar/quick-switcher.js",
+  "sidebar/runtime-client.js",
+  "sidebar/arc-model.js",
+  "sidebar/context-menu-actions.js",
   "content.js"
 ];
 const broadcastTimers = new Map();
