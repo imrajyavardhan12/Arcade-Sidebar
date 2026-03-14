@@ -51,9 +51,9 @@
     name: "Personal",
     icon: "•"
   };
-  const DEFAULT_WIDTH = 280;
-  const MIN_WIDTH = 200;
-  const MAX_WIDTH = 400;
+  const DEFAULT_WIDTH = 320;
+  const MIN_WIDTH = 240;
+  const MAX_WIDTH = 480;
   const OPEN_TRANSITION = "transform 250ms cubic-bezier(0.0, 0.0, 0.2, 1.0)";
   const CLOSE_TRANSITION = "transform 220ms cubic-bezier(0.4, 0.0, 1.0, 1.0)";
   const MESSAGE_TYPES = messagesModule?.MESSAGE_TYPES || {
@@ -328,7 +328,7 @@
 
   const sidebarEl = document.createElement("aside");
   sidebarEl.className = "bts-sidebar";
-  sidebarEl.style.cssText = `position: fixed; inset: 0 auto 0 0; width: ${DEFAULT_WIDTH}px; height: 100vh; transform: translateX(-100%); transition: none; pointer-events: auto;`;
+  sidebarEl.style.cssText = `position: fixed; inset: 0 auto 0 0; width: ${DEFAULT_WIDTH}px; height: 100vh; transform: translateX(-100%); transition: none; pointer-events: auto; z-index: 2147483647;`;
   sidebarEl.setAttribute("role", "complementary");
   sidebarEl.setAttribute("aria-label", "Brave tab sidebar");
 
@@ -1506,6 +1506,16 @@
     return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(value)));
   }
 
+  function pushPageContent(open, width, animate) {
+    const ml = open ? `${width}px` : "0px";
+    if (animate) {
+      document.documentElement.style.transition = "margin-left 250ms cubic-bezier(0.0, 0.0, 0.2, 1.0)";
+    } else {
+      document.documentElement.style.transition = "none";
+    }
+    document.documentElement.style.marginLeft = ml;
+  }
+
   function updateToggleButton() {
     toggleButton.title = sidebarOpen ? "Hide sidebar" : "Show sidebar";
     toggleButton.setAttribute("aria-label", sidebarOpen ? "Hide sidebar" : "Show sidebar");
@@ -1930,7 +1940,11 @@
     const { persist = true } = options;
     sidebarWidth = clampWidth(nextWidth);
     sidebarEl.style.setProperty("--bts-sidebar-width", `${sidebarWidth}px`);
+    sidebarEl.style.width = `${sidebarWidth}px`;
     commandPaletteEl.style.setProperty("--bts-sidebar-width", `${sidebarWidth}px`);
+    if (sidebarOpen) {
+      pushPageContent(true, sidebarWidth, false);
+    }
     if (persist) {
       void persistWindowState();
     }
@@ -1982,6 +1996,7 @@
       sidebarEl.style.transition = "none";
       syncOpenClasses();
       sidebarEl.style.transform = sidebarOpen ? "translateX(0)" : "translateX(-100%)";
+      pushPageContent(sidebarOpen, sidebarWidth, false);
       if (!sidebarOpen) {
         closeContextMenu();
         closeCommandPalette({ restoreTabFocus: false });
@@ -1999,6 +2014,7 @@
 
     sidebarEl.style.willChange = "transform";
     sidebarEl.style.transition = sidebarOpen ? OPEN_TRANSITION : CLOSE_TRANSITION;
+    pushPageContent(sidebarOpen, sidebarWidth, true);
 
     requestAnimationFrame(() => {
       syncOpenClasses();
@@ -2317,17 +2333,15 @@
         return;
       }
       dragContext = null;
+      resizeHandle.classList.remove("is-dragging");
       document.removeEventListener("pointermove", onPointerMove);
-      const snappedWidth = Math.round(sidebarWidth / 10) * 10;
-      sidebarEl.classList.add("is-snapping-width");
-      setSidebarWidth(snappedWidth, { persist: true });
-      setTimeout(() => {
-        sidebarEl.classList.remove("is-snapping-width");
-      }, 180);
+      setSidebarWidth(sidebarWidth, { persist: true });
     }
 
     resizeHandle.addEventListener("pointerdown", (event) => {
       event.preventDefault();
+      resizeHandle.setPointerCapture(event.pointerId);
+      resizeHandle.classList.add("is-dragging");
       dragContext = {
         startX: event.clientX,
         startWidth: sidebarWidth
