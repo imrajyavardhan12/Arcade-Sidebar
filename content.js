@@ -2377,7 +2377,8 @@
       : [];
 
     collapsedGroupIds = new Set(persistedGroupIds);
-    setOpen(Boolean(state?.open), { persist: false, broadcast: false, animate: false });
+    const initialOpen = state && typeof state.open === "boolean" ? state.open : true;
+    setOpen(initialOpen, { persist: true, broadcast: true, animate: false });
     renderTabList();
   }
 
