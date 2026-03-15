@@ -1506,6 +1506,59 @@
     return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(value)));
   }
 
+  const FIXED_SHIFT_STYLE_ID = "bts-fixed-shift";
+  const PAGE_OFFSET_CSS_VAR = "--bts-page-offset";
+  const YOUTUBE_HOSTNAME_PATTERN = /(^|\.)youtube\.com$/i;
+
+  function ensureFixedShiftStyle() {
+    if (document.getElementById(FIXED_SHIFT_STYLE_ID)) {
+      return document.getElementById(FIXED_SHIFT_STYLE_ID);
+    }
+    const style = document.createElement("style");
+    style.id = FIXED_SHIFT_STYLE_ID;
+    (document.head || document.documentElement).appendChild(style);
+    return style;
+  }
+
+  function isYouTubePage() {
+    return YOUTUBE_HOSTNAME_PATTERN.test(String(globalScope.location?.hostname || ""));
+  }
+
+  function getGenericFixedShiftStyles(width) {
+    return `
+      [style*="position: fixed"]:not(#brave-tab-sidebar-host),
+      [style*="position:fixed"]:not(#brave-tab-sidebar-host) {
+        margin-left: ${width}px !important;
+        max-width: calc(100% - ${width}px) !important;
+      }
+    `;
+  }
+
+  function getYouTubeShiftStyles() {
+    return `
+      ytd-app {
+        margin-left: var(${PAGE_OFFSET_CSS_VAR}) !important;
+        width: calc(100% - var(${PAGE_OFFSET_CSS_VAR})) !important;
+        max-width: calc(100vw - var(${PAGE_OFFSET_CSS_VAR})) !important;
+        box-sizing: border-box !important;
+      }
+
+      #masthead-container,
+      #guide,
+      #mini-guide,
+      ytd-mini-guide-renderer,
+      tp-yt-app-header,
+      #contentContainer.tp-yt-app-header-layout,
+      tp-yt-app-header-layout > #contentContainer {
+        margin-left: var(${PAGE_OFFSET_CSS_VAR}) !important;
+        max-width: calc(100vw - var(${PAGE_OFFSET_CSS_VAR})) !important;
+        box-sizing: border-box !important;
+      }
+
+      ${getGenericFixedShiftStyles(`var(${PAGE_OFFSET_CSS_VAR})`)}
+    `;
+  }
+
   function pushPageContent(open, width, animate) {
     const ml = open ? `${width}px` : "0px";
     if (animate) {
@@ -1513,7 +1566,22 @@
     } else {
       document.documentElement.style.transition = "none";
     }
-    document.documentElement.style.marginLeft = ml;
+    const youTubePage = isYouTubePage();
+    document.documentElement.style.marginLeft = youTubePage ? "0px" : ml;
+    if (open) {
+      document.documentElement.style.setProperty(PAGE_OFFSET_CSS_VAR, ml);
+    } else {
+      document.documentElement.style.removeProperty(PAGE_OFFSET_CSS_VAR);
+    }
+
+    const style = ensureFixedShiftStyle();
+    if (open) {
+      style.textContent = youTubePage
+        ? getYouTubeShiftStyles()
+        : getGenericFixedShiftStyles(width);
+    } else {
+      style.textContent = "";
+    }
   }
 
   function updateToggleButton() {

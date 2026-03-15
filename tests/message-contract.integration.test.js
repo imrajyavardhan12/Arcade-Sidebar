@@ -703,3 +703,41 @@ test("background handles tab and group mutation messages from content", async ()
   assert.equal(closeResponse.ok, true);
   assert.equal(harness.getTabs().some((tab) => tab.id === targetTab.id), false);
 });
+
+test("background routes extension-created blank tabs to an http page the sidebar can inject into", async () => {
+  const harness = createBackgroundHarness({
+    tabs: [
+      {
+        id: 31,
+        windowId: 5,
+        index: 0,
+        title: "Docs",
+        url: "https://docs.example.com",
+        favIconUrl: "data:image/png;base64,AA==",
+        active: true
+      }
+    ]
+  });
+
+  harness.loadBackground();
+
+  const createResponse = await harness.sendRuntimeMessage(
+    {
+      type: MESSAGE_TYPES.CREATE_TAB,
+      payload: {
+        windowId: 5
+      }
+    },
+    { tab: { id: 31, windowId: 5 } }
+  );
+
+  assert.equal(createResponse.ok, true);
+
+  const createdTab = harness
+    .getTabs()
+    .find((tab) => tab.windowId === 5 && tab.id !== 31);
+
+  assert.ok(createdTab);
+  assert.equal(createdTab.url, "https://search.brave.com/");
+  assert.equal(createdTab.active, true);
+});

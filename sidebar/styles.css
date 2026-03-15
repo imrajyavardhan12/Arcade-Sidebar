@@ -1148,17 +1148,7 @@ input {
   border-color: var(--bts-sidebar-border);
 }
 
-.bts-tab-row.is-active::before {
-  content: "";
-  position: absolute;
-  left: 8px;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, var(--bts-sidebar-accent), var(--bts-sidebar-accent-strong));
-  box-shadow: 0 0 14px color-mix(in srgb, var(--bts-sidebar-accent-soft) 55%, transparent);
-}
+
 
 .bts-tab-title {
   flex: 1;
