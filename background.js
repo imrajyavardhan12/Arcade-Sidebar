@@ -7,6 +7,7 @@ if (typeof importScripts === "function") {
 const WINDOW_STATE_PREFIX = "bts_window_state_";
 const TOGGLE_COMMAND = "toggle-sidebar";
 const TOGGLE_COMMAND_PALETTE = "toggle-command-palette";
+const DEFAULT_NEW_TAB_URL = "https://search.brave.com/";
 const messageContract = globalThis.BraveSidebarMessages;
 const MESSAGE_TYPES = messageContract?.MESSAGE_TYPES || {
   GET_STATE: "sidebar:getState",
@@ -782,11 +783,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           typeof message.payload?.url === "string" ? message.payload.url.trim() : "";
         const createProperties = {
           windowId,
-          active: true
+          active: true,
+          url: url || DEFAULT_NEW_TAB_URL
         };
-        if (url) {
-          createProperties.url = url;
-        }
         await createTab(createProperties);
       }
       sendResponse({ ok: true });
