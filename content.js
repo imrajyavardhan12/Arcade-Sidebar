@@ -24,6 +24,7 @@
   const arcModelModule = globalScope.BraveSidebarArcModel;
   const contextMenuActionsModule = globalScope.BraveSidebarContextMenuActions;
   const layoutControllerModule = globalScope.BraveSidebarLayoutController;
+  const interactionControllerModule = globalScope.BraveSidebarInteractionController;
 
   if (
     !searchModule ||
@@ -40,7 +41,8 @@
     !runtimeClientModule ||
     !arcModelModule ||
     !contextMenuActionsModule ||
-    !layoutControllerModule
+    !layoutControllerModule ||
+    !interactionControllerModule
   ) {
     return;
   }
@@ -218,13 +220,6 @@
   let searchQuery = "";
   let collapsedGroupIds = new Set();
   let previousVisibleTabIds = new Set();
-  let focusedTabId = null;
-  let contextMenuTabId = null;
-  let commandPaletteOpen = false;
-  let commandPaletteQuery = "";
-  let commandPaletteItems = [];
-  let commandPaletteFocusedIndex = -1;
-  let suppressPointerUntil = 0;
   let sidebarData = {
     spaces: [DEFAULT_SPACE],
     activeSpaceId: DEFAULT_SPACE.id,
@@ -423,6 +418,7 @@
     animationState = String(nextState?.animationState || animationState);
   }
 
+  let interactionController = null;
   const layoutController = layoutControllerModule.createSidebarLayoutController({
     globalScope,
     document,
@@ -445,8 +441,7 @@
       void broadcastOpenState();
     },
     onClose: () => {
-      closeContextMenu();
-      closeCommandPalette({ restoreTabFocus: false });
+      interactionController?.handleSidebarClosed();
     }
   });
 
@@ -1537,403 +1532,6 @@
     return Number.isInteger(windowId) ? `${WINDOW_STATE_PREFIX}${windowId}` : null;
   }
 
-  function closeContextMenu() {
-    contextMenuTabId = null;
-    contextMenuEl.replaceChildren();
-    contextMenuEl.classList.remove("is-open");
-    contextMenuEl.setAttribute("aria-hidden", "true");
-  }
-
-  function createCommandPaletteCandidates() {
-    return commandPaletteDataModule.createCommandPaletteCandidates({
-      tabs: latestSnapshot.tabs,
-      favorites: sidebarData.favorites,
-      pinnedNodes: getActiveSpacePinnedNodes(),
-      sidebarOpen
-    });
-  }
-
-  function setCommandPaletteFocusedIndex(nextIndex) {
-    if (commandPaletteItems.length === 0) {
-      commandPaletteFocusedIndex = -1;
-      return;
-    }
-
-    const clamped = Math.max(0, Math.min(commandPaletteItems.length - 1, nextIndex));
-    commandPaletteFocusedIndex = clamped;
-
-    const rows = commandList.querySelectorAll(".bts-command-item");
-    for (const row of rows) {
-      const rowIndex = Number(row.dataset.commandIndex);
-      const isActive = rowIndex === commandPaletteFocusedIndex;
-      row.classList.toggle("is-active", isActive);
-      row.setAttribute("aria-selected", isActive ? "true" : "false");
-      if (isActive) {
-        row.scrollIntoView({ block: "nearest" });
-      }
-    }
-  }
-
-  function renderCommandPaletteList() {
-    commandList.replaceChildren();
-
-    if (!commandPaletteItems.length) {
-      const empty = document.createElement("div");
-      empty.className = "bts-command-empty";
-      empty.textContent = "No results";
-      commandList.append(empty);
-      return;
-    }
-
-    for (let index = 0; index < commandPaletteItems.length; index += 1) {
-      const item = commandPaletteItems[index];
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "bts-command-item";
-      row.dataset.commandIndex = String(index);
-      row.dataset.commandType = String(item.type || "action");
-      row.setAttribute("role", "option");
-      row.setAttribute("aria-selected", index === commandPaletteFocusedIndex ? "true" : "false");
-      if (index === commandPaletteFocusedIndex) {
-        row.classList.add("is-active");
-      }
-
-      const label = document.createElement("span");
-      label.className = "bts-command-label";
-      label.textContent = item.label;
-
-      const subtitle = document.createElement("span");
-      subtitle.className = "bts-command-subtitle";
-      subtitle.textContent = item.subtitle || "";
-
-      row.append(label, subtitle);
-
-      row.addEventListener("mouseenter", () => {
-        setCommandPaletteFocusedIndex(index);
-      });
-
-      row.addEventListener("click", () => {
-        void executeCommandPaletteItem(item);
-      });
-
-      commandList.append(row);
-    }
-  }
-
-  function refreshCommandPaletteItems(options = {}) {
-    const { preserveSelection = false } = options;
-    const previousSelectedId =
-      preserveSelection && commandPaletteFocusedIndex >= 0
-        ? commandPaletteItems[commandPaletteFocusedIndex]?.id
-        : null;
-
-    const candidates = createCommandPaletteCandidates();
-    commandPaletteItems = quickSwitcherModule.rankItems(candidates, commandPaletteQuery, 60);
-
-    if (!commandPaletteItems.length) {
-      commandPaletteFocusedIndex = -1;
-    } else if (previousSelectedId) {
-      const nextIndex = commandPaletteItems.findIndex((item) => item.id === previousSelectedId);
-      commandPaletteFocusedIndex = nextIndex >= 0 ? nextIndex : 0;
-    } else if (commandPaletteFocusedIndex < 0 || commandPaletteFocusedIndex >= commandPaletteItems.length) {
-      commandPaletteFocusedIndex = 0;
-    }
-
-    renderCommandPaletteList();
-  }
-
-  async function executeCommandPaletteItem(item) {
-    if (!item || typeof item !== "object") {
-      return;
-    }
-
-    closeCommandPalette({ restoreTabFocus: false });
-
-    if (item.command === "new-tab") {
-      await sendMessage({
-        type: MESSAGE_TYPES.CREATE_TAB,
-        payload: {
-          windowId
-        }
-      });
-      return;
-    }
-
-    if (item.command === "focus-search") {
-      expandSearch();
-      return;
-    }
-
-    if (item.command === "toggle-sidebar") {
-      setOpen(!sidebarOpen, { persist: true, broadcast: true, animate: true });
-      return;
-    }
-
-    if (item.command === "close-active-tab" && Number.isInteger(item.tabId)) {
-      await sendMessage({
-        type: MESSAGE_TYPES.CLOSE_TAB,
-        payload: { tabId: item.tabId }
-      });
-      return;
-    }
-
-    if (item.command === "toggle-pin-active-tab" && Number.isInteger(item.tabId)) {
-      await sendMessage({
-        type: MESSAGE_TYPES.UPDATE_TAB,
-        payload: {
-          tabId: item.tabId,
-          update: { pinned: Boolean(item.nextPinned) }
-        }
-      });
-      return;
-    }
-
-    if (item.command === "activate-tab" && Number.isInteger(item.tabId)) {
-      focusedTabId = item.tabId;
-      await sendMessage({
-        type: MESSAGE_TYPES.ACTIVATE_TAB,
-        payload: { tabId: item.tabId }
-      });
-      return;
-    }
-
-    if (item.command === "open-url" && typeof item.url === "string") {
-      await openOrFocusUrl(item.url);
-    }
-  }
-
-  function openCommandPalette() {
-    if (commandPaletteOpen) {
-      return;
-    }
-
-    closeContextMenu();
-
-    commandPaletteOpen = true;
-    commandPaletteQuery = "";
-    commandInput.value = "";
-
-    commandPaletteEl.classList.add("is-open");
-    commandPaletteEl.setAttribute("aria-hidden", "false");
-    refreshCommandPaletteItems({ preserveSelection: false });
-
-    requestAnimationFrame(() => {
-      commandInput.focus();
-      commandInput.select();
-    });
-  }
-
-  function closeCommandPalette(options = {}) {
-    const { restoreTabFocus = true } = options;
-    if (!commandPaletteOpen) {
-      return;
-    }
-
-    commandPaletteOpen = false;
-    commandPaletteQuery = "";
-    commandPaletteItems = [];
-    commandPaletteFocusedIndex = -1;
-
-    commandPaletteEl.classList.remove("is-open");
-    commandPaletteEl.setAttribute("aria-hidden", "true");
-    commandInput.value = "";
-    commandList.replaceChildren();
-
-    if (restoreTabFocus) {
-      focusRenderedTabRow(focusedTabId, { preventScroll: true });
-    }
-  }
-
-  function toggleCommandPalette() {
-    if (commandPaletteOpen) {
-      closeCommandPalette({ restoreTabFocus: true });
-      return;
-    }
-
-    if (!sidebarOpen) {
-      setOpen(true, { persist: true, broadcast: true, animate: true });
-    }
-
-    openCommandPalette();
-  }
-
-  function isCommandPaletteShortcut(event) {
-    if (!event || typeof event !== "object") {
-      return false;
-    }
-
-    if (event.altKey || event.shiftKey) {
-      return false;
-    }
-
-    if (!event.metaKey && !event.ctrlKey) {
-      return false;
-    }
-
-    return String(event.key || "").toLowerCase() === "k";
-  }
-
-  function handleCommandPaletteShortcut(event) {
-    if (!isCommandPaletteShortcut(event)) {
-      return false;
-    }
-
-    if (!commandPaletteOpen && isEditableTarget(event.target)) {
-      return false;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    toggleCommandPalette();
-    return true;
-  }
-
-  function armInteractionSuppression(durationMs = 260) {
-    suppressPointerUntil = Math.max(suppressPointerUntil, performance.now() + durationMs);
-  }
-
-  function shouldSuppressInteraction(event) {
-    if (performance.now() >= suppressPointerUntil) {
-      return false;
-    }
-
-    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-    return !path.includes(contextMenuEl);
-  }
-
-  function createContextMenuItem(label, onSelect, options = {}) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "bts-context-menu-item";
-    item.setAttribute("role", "menuitem");
-    item.textContent = label;
-    const isDisabled = Boolean(options.disabled);
-
-    if (options.destructive) {
-      item.classList.add("is-destructive");
-    }
-
-    if (options.secondary) {
-      item.classList.add("is-secondary");
-    }
-
-    if (isDisabled) {
-      item.classList.add("is-disabled");
-      item.disabled = true;
-    }
-
-    item.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-    });
-
-    item.addEventListener("mousedown", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-    });
-
-    item.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (isDisabled) {
-        return;
-      }
-      armInteractionSuppression();
-      closeContextMenu();
-      void Promise.resolve(onSelect()).catch(() => {});
-    });
-
-    return item;
-  }
-
-  function createContextMenuSeparator() {
-    const separator = document.createElement("div");
-    separator.className = "bts-context-menu-separator";
-    separator.setAttribute("role", "separator");
-    return separator;
-  }
-
-  function positionContextMenu(x, y) {
-    const width = contextMenuEl.offsetWidth || 220;
-    const height = contextMenuEl.offsetHeight || 320;
-    const maxX = Math.max(8, globalScope.innerWidth - width - 8);
-    const maxY = Math.max(8, globalScope.innerHeight - height - 8);
-    const left = Math.min(Math.max(8, x), maxX);
-    const top = Math.min(Math.max(8, y), maxY);
-
-    contextMenuEl.style.left = `${left}px`;
-    contextMenuEl.style.top = `${top}px`;
-  }
-
-  async function executeContextMenuAction(actionId, tab, options = {}) {
-    const result = await contextMenuActionsModule.executeTabAction(actionId, {
-      tab,
-      tabUrl: options.tabUrl,
-      groupId: options.groupId,
-      sendMessage,
-      resolveTabForStorage,
-      addTabToFavorites,
-      removeFavoriteByUrl,
-      pinTabInActiveSpace,
-      unpinUrlInActiveSpace,
-      MESSAGE_TYPES
-    });
-
-    if (result?.shouldRender) {
-      renderTabList();
-    }
-  }
-
-  function openContextMenuForTab(tab, x, y) {
-    closeCommandPalette({ restoreTabFocus: false });
-
-    if (!tab) {
-      closeContextMenu();
-      return;
-    }
-
-    contextMenuTabId = tab.id;
-    const tabUrl = normalizeUrlKey(tab.url);
-    const canStoreUrl = isHttpUrl(tabUrl);
-    const model = contextMenuModelModule.buildTabContextMenuModel({
-      tab,
-      groups: latestSnapshot.groups,
-      canStoreUrl,
-      isFavorite: isUrlInFavorites(tabUrl),
-      favoritesCount: sidebarData.favorites.length,
-      maxFavorites: MAX_FAVORITES,
-      isPinnedInActiveSpace: isUrlPinnedInActiveSpace(tabUrl)
-    });
-
-    const items = model.map((entry) => {
-      if (entry.kind === "separator") {
-        return createContextMenuSeparator();
-      }
-
-      return createContextMenuItem(
-        entry.label,
-        () => executeContextMenuAction(entry.id, tab, { tabUrl, groupId: entry.groupId }),
-        {
-          destructive: entry.destructive,
-          secondary: entry.secondary,
-          disabled: entry.disabled
-        }
-      );
-    });
-
-    contextMenuEl.replaceChildren(...items);
-    contextMenuEl.classList.add("is-open");
-    contextMenuEl.setAttribute("aria-hidden", "false");
-
-    requestAnimationFrame(() => {
-      positionContextMenu(x, y);
-      const firstMenuItem = contextMenuEl.querySelector(".bts-context-menu-item:not(.is-disabled)");
-      if (firstMenuItem && typeof firstMenuItem.focus === "function") {
-        firstMenuItem.focus();
-      }
-    });
-  }
-
   async function persistWindowState() {
     const key = getStateKey();
     if (!key) {
@@ -2003,93 +1601,58 @@
     });
   }
 
-  function moveFocusedTabByDirection(direction) {
-    const visibleTabs = getVisibleTabs();
-    const tabIds = getVisibleTabIds(visibleTabs);
-    const nextFocusedTabId = keyboardNavModule.getNextFocusTabId({
-      tabIds,
-      currentFocusedTabId: focusedTabId,
-      activeTabId: getActiveSnapshotTabId(),
-      direction
-    });
-
-    if (!Number.isInteger(nextFocusedTabId)) {
-      return;
+  interactionController = interactionControllerModule.createSidebarInteractionController({
+    globalScope,
+    document,
+    shadowRoot,
+    searchInput,
+    searchWrap,
+    searchToggleButton,
+    commandPaletteEl,
+    commandBackdrop,
+    commandInput,
+    commandList,
+    contextMenuEl,
+    keyboardNavModule,
+    commandPaletteDataModule,
+    quickSwitcherModule,
+    contextMenuModelModule,
+    contextMenuActionsModule,
+    maxFavorites: MAX_FAVORITES,
+    MESSAGE_TYPES,
+    getWindowId: () => windowId,
+    getTabs: () => latestSnapshot.tabs,
+    getGroups: () => latestSnapshot.groups,
+    getFavorites: () => sidebarData.favorites,
+    getPinnedNodes: () => getActiveSpacePinnedNodes(),
+    getVisibleTabs,
+    getActiveTabId: getActiveSnapshotTabId,
+    getSidebarOpen: () => sidebarOpen,
+    setOpen,
+    renderTabList,
+    focusRenderedTabRow,
+    sendMessage,
+    getSearchQuery: () => searchQuery,
+    setSearchQuery: (nextQuery) => {
+      searchQuery = nextQuery;
+    },
+    expandSearch,
+    collapseSearch,
+    openOrFocusUrl,
+    resolveTabForStorage,
+    addTabToFavorites,
+    removeFavoriteByUrl,
+    pinTabInActiveSpace,
+    unpinUrlInActiveSpace,
+    normalizeUrlKey,
+    isHttpUrl,
+    isUrlInFavorites,
+    isUrlPinnedInActiveSpace,
+    clearDragDropVisualState,
+    resetDragDropState: () => {
+      dragDropController.resetAll();
     }
-
-    focusedTabId = nextFocusedTabId;
-    renderTabList();
-    focusRenderedTabRow(nextFocusedTabId);
-  }
-
-  async function activateFocusedTab() {
-    const visibleTabs = getVisibleTabs();
-    const tabIds = getVisibleTabIds(visibleTabs);
-    const tabId = keyboardNavModule.resolveFocusTabId({
-      tabIds,
-      currentFocusedTabId: focusedTabId,
-      activeTabId: getActiveSnapshotTabId()
-    });
-
-    if (!Number.isInteger(tabId)) {
-      return;
-    }
-
-    focusedTabId = tabId;
-    await sendMessage({
-      type: MESSAGE_TYPES.ACTIVATE_TAB,
-      payload: { tabId }
-    });
-  }
-
-  async function closeFocusedTab() {
-    const visibleTabs = getVisibleTabs();
-    const tabIds = getVisibleTabIds(visibleTabs);
-    const tabId = keyboardNavModule.resolveFocusTabId({
-      tabIds,
-      currentFocusedTabId: focusedTabId,
-      activeTabId: getActiveSnapshotTabId()
-    });
-
-    if (!Number.isInteger(tabId)) {
-      return;
-    }
-
-    focusedTabId = keyboardNavModule.getFocusAfterClose({
-      tabIds,
-      closingTabId: tabId,
-      currentFocusedTabId: focusedTabId,
-      activeTabId: getActiveSnapshotTabId()
-    });
-
-    await sendMessage({
-      type: MESSAGE_TYPES.CLOSE_TAB,
-      payload: { tabId }
-    });
-  }
-
-  function isEditableTarget(target) {
-    if (!target || typeof target !== "object") {
-      return false;
-    }
-
-    const tagName = String(target.tagName || "").toUpperCase();
-    return tagName === "INPUT" || tagName === "TEXTAREA" || Boolean(target.isContentEditable);
-  }
-
-  async function activateFirstVisibleTab() {
-    const tabs = getVisibleTabs();
-    const first = tabs[0];
-    if (!first) {
-      return;
-    }
-
-    focusedTabId = first.id;
-    await sendMessage({
-      type: MESSAGE_TYPES.ACTIVATE_TAB,
-      payload: { tabId: first.id }
-    });
-  }
+  });
 
   async function moveTabByDropSource(dragTabId, targetTabId) {
     if (!Number.isInteger(dragTabId) || !Number.isInteger(targetTabId)) {
@@ -2139,9 +1702,8 @@
     }
 
     const activeTabId = getActiveSnapshotTabId();
-    focusedTabId = keyboardNavModule.resolveFocusTabId({
+    const focusedTabId = interactionController.syncFocusedTabId({
       tabIds: visibleTabIdList,
-      currentFocusedTabId: focusedTabId,
       activeTabId
     });
 
@@ -2156,17 +1718,26 @@
       enteringTabIds,
       handlers: {
         onActivate: (tabId) => {
-          focusedTabId = tabId;
+          interactionController.setFocusedTabId(tabId);
           void sendMessage({
             type: MESSAGE_TYPES.ACTIVATE_TAB,
             payload: { tabId }
           });
         },
         onClose: (tabId) => {
-          focusedTabId = keyboardNavModule.getFocusAfterClose({
-            tabIds: visibleTabIdList,
-            closingTabId: tabId,
-            currentFocusedTabId: focusedTabId,
+          interactionController.setFocusedTabId(
+            keyboardNavModule.getFocusAfterClose({
+              tabIds: visibleTabIdList,
+              closingTabId: tabId,
+              currentFocusedTabId: interactionController.getFocusedTabId(),
+              activeTabId
+            })
+          );
+
+          interactionController.syncFocusedTabId({
+            tabIds: keyboardNavModule.normalizeTabIds(
+              visibleTabIdList.filter((visibleTabId) => visibleTabId !== tabId)
+            ),
             activeTabId
           });
 
@@ -2184,14 +1755,14 @@
           void persistWindowState();
         },
         onContextMenu: ({ tab, x, y }) => {
-          focusedTabId = tab?.id;
-          openContextMenuForTab(tab, x, y);
+          interactionController.setFocusedTabId(tab?.id);
+          interactionController.openContextMenuForTab(tab, x, y);
         },
         onFocus: (tabId) => {
-          focusedTabId = tabId;
+          interactionController.setFocusedTabId(tabId);
         },
         onDragStart: (tabId) => {
-          focusedTabId = tabId;
+          interactionController.setFocusedTabId(tabId);
           dragDropController.beginTabDrag(tabId);
         },
         getDraggingTabId: () => dragDropController.getDraggingTabId(),
@@ -2206,22 +1777,11 @@
       groupUtils: groupsModule
     });
 
-    if (hadTabRowFocus && Number.isInteger(focusedTabId)) {
-      focusRenderedTabRow(focusedTabId, { preventScroll: true });
-    }
-
     previousVisibleTabIds = visibleTabIds;
-
-    if (Number.isInteger(contextMenuTabId)) {
-      const tabStillVisible = latestSnapshot.tabs.some((tab) => tab.id === contextMenuTabId);
-      if (!tabStillVisible) {
-        closeContextMenu();
-      }
-    }
-
-    if (commandPaletteOpen) {
-      refreshCommandPaletteItems({ preserveSelection: true });
-    }
+    interactionController.handlePostRender({
+      hadTabRowFocus,
+      tabs: latestSnapshot.tabs
+    });
   }
 
   function renderTabList() {
@@ -2338,252 +1898,9 @@
     renderTabList();
   }
 
-  searchToggleButton.addEventListener("click", () => {
-    if (searchWrap.classList.contains("bts-search-collapsed")) {
-      expandSearch();
-    } else {
-      collapseSearch();
-    }
-  });
-
-  searchInput.addEventListener("input", () => {
-    searchQuery = searchInput.value || "";
-    closeContextMenu();
-    renderTabList();
-  });
-
-  searchInput.addEventListener("blur", () => {
-    if (!searchQuery.trim()) {
-      collapseSearch();
-    }
-  });
-
-  searchInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      event.stopPropagation();
-      void activateFirstVisibleTab();
-      return;
-    }
-
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      event.stopPropagation();
-      moveFocusedTabByDirection(event.key === "ArrowDown" ? 1 : -1);
-      return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      collapseSearch();
-      if (!searchQuery) {
-        setOpen(false, { persist: true, broadcast: true, animate: true });
-      }
-    }
-  });
-
-  commandBackdrop.addEventListener("click", () => {
-    closeCommandPalette({ restoreTabFocus: true });
-  });
-
-  commandInput.addEventListener("input", () => {
-    commandPaletteQuery = commandInput.value || "";
-    refreshCommandPaletteItems({ preserveSelection: false });
-  });
-
-  commandInput.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      const delta = event.key === "ArrowDown" ? 1 : -1;
-      const nextIndex = commandPaletteFocusedIndex < 0 ? 0 : commandPaletteFocusedIndex + delta;
-      setCommandPaletteFocusedIndex(nextIndex);
-      return;
-    }
-
-    if (event.key === "Enter") {
-      event.preventDefault();
-      const selected = commandPaletteItems[commandPaletteFocusedIndex];
-      if (selected) {
-        void executeCommandPaletteItem(selected);
-      }
-      return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeCommandPalette({ restoreTabFocus: true });
-    }
-  });
-
-  commandList.addEventListener("mousedown", (event) => {
-    event.preventDefault();
-  });
-
-  document.addEventListener(
-    "keydown",
-    (event) => {
-      if (event.defaultPrevented) {
-        return;
-      }
-      handleCommandPaletteShortcut(event);
-    },
-    true
-  );
-
-  shadowRoot.addEventListener(
-    "pointerup",
-    (event) => {
-      if (!shouldSuppressInteraction(event)) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-    },
-    true
-  );
-
-  shadowRoot.addEventListener(
-    "click",
-    (event) => {
-      if (!shouldSuppressInteraction(event)) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-    },
-    true
-  );
-
-  shadowRoot.addEventListener("keydown", (event) => {
-    if (event.defaultPrevented) {
-      return;
-    }
-
-    if (handleCommandPaletteShortcut(event)) {
-      return;
-    }
-
-    const metaOrCtrl = event.metaKey || event.ctrlKey;
-    const normalizedKey = String(event.key).toLowerCase();
-
-    if (commandPaletteOpen) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeCommandPalette({ restoreTabFocus: true });
-        return;
-      }
-
-      if (event.target !== commandInput && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-        event.preventDefault();
-        const delta = event.key === "ArrowDown" ? 1 : -1;
-        const nextIndex = commandPaletteFocusedIndex < 0 ? 0 : commandPaletteFocusedIndex + delta;
-        setCommandPaletteFocusedIndex(nextIndex);
-        return;
-      }
-
-      if (event.target !== commandInput && event.key === "Enter") {
-        event.preventDefault();
-        const selected = commandPaletteItems[commandPaletteFocusedIndex];
-        if (selected) {
-          void executeCommandPaletteItem(selected);
-        }
-      }
-
-      return;
-    }
-
-    if (event.key === "Escape" && contextMenuTabId !== null) {
-      event.preventDefault();
-      closeContextMenu();
-      focusRenderedTabRow(focusedTabId, { preventScroll: true });
-      return;
-    }
-
-    if (metaOrCtrl && normalizedKey === "f") {
-      event.preventDefault();
-      expandSearch();
-      return;
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      if (searchQuery || !searchWrap.classList.contains("bts-search-collapsed")) {
-        collapseSearch();
-        return;
-      }
-
-      if (sidebarOpen) {
-        setOpen(false, { persist: true, broadcast: true, animate: true });
-      }
-      return;
-    }
-
-    if (!sidebarOpen || contextMenuTabId !== null) {
-      return;
-    }
-
-    if (isEditableTarget(event.target)) {
-      return;
-    }
-
-    if (event.metaKey || event.ctrlKey || event.altKey) {
-      return;
-    }
-
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      moveFocusedTabByDirection(event.key === "ArrowDown" ? 1 : -1);
-      return;
-    }
-
-    if (event.key === "Enter") {
-      event.preventDefault();
-      void activateFocusedTab();
-      return;
-    }
-
-    if (event.key === "Backspace" || event.key === "Delete") {
-      event.preventDefault();
-      void closeFocusedTab();
-    }
-  });
-
-  shadowRoot.addEventListener("pointerdown", (event) => {
-    if (shouldSuppressInteraction(event)) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-
-    if (contextMenuTabId === null) {
-      return;
-    }
-
-    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-    if (!path.includes(contextMenuEl)) {
-      closeContextMenu();
-    }
-  });
-
-  shadowRoot.addEventListener("contextmenu", (event) => {
-    if (contextMenuTabId === null) {
-      return;
-    }
-
-    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-    if (!path.some((node) => node?.classList?.contains?.("bts-tab-row"))) {
-      closeContextMenu();
-    }
-  });
-
-  shadowRoot.addEventListener("dragend", () => {
-    dragDropController.resetAll();
-    clearDragDropVisualState();
-  });
-
   handleResize();
   setupArcDropZones();
+  interactionController.bind();
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || typeof message !== "object") {
@@ -2654,7 +1971,7 @@
         return;
       }
 
-      toggleCommandPalette();
+      interactionController.toggleCommandPalette();
       sendResponse({ ok: true });
     }
   });

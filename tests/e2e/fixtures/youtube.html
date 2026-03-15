@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en" data-bts-layout-adapter="youtube">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>YouTube Layout Fixture</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        background: #0f0f0f;
+        color: #f8f8f8;
+      }
+
+      ytd-app {
+        display: block;
+        min-height: 100vh;
+        background: #181818;
+      }
+
+      #masthead-container,
+      #guide,
+      #mini-guide,
+      ytd-mini-guide-renderer,
+      tp-yt-app-header,
+      #contentContainer.tp-yt-app-header-layout,
+      tp-yt-app-header-layout > #contentContainer {
+        display: block;
+      }
+
+      #masthead-container {
+        position: sticky;
+        top: 0;
+        height: 64px;
+        padding: 16px 24px;
+        background: rgba(20, 20, 20, 0.94);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      #guide {
+        position: fixed;
+        top: 64px;
+        left: 0;
+        width: 220px;
+        bottom: 0;
+        padding: 20px 16px;
+        background: #121212;
+        border-right: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      #mini-guide,
+      ytd-mini-guide-renderer {
+        display: none;
+      }
+
+      tp-yt-app-header-layout {
+        display: block;
+        min-height: calc(100vh - 64px);
+      }
+
+      #contentContainer.tp-yt-app-header-layout {
+        display: block;
+        padding-left: 220px;
+      }
+
+      .feed {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+        padding: 24px;
+      }
+
+      .video {
+        min-height: 180px;
+        padding: 16px;
+        border-radius: 18px;
+        background: #242424;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+    </style>
+  </head>
+  <body>
+    <ytd-app>
+      <div id="masthead-container">YouTube header fixture</div>
+      <div id="guide">Guide rail</div>
+      <div id="mini-guide">Mini guide</div>
+      <ytd-mini-guide-renderer></ytd-mini-guide-renderer>
+      <tp-yt-app-header>App header</tp-yt-app-header>
+      <tp-yt-app-header-layout>
+        <div id="contentContainer" class="tp-yt-app-header-layout">
+          <div class="feed">
+            <section class="video">Video one</section>
+            <section class="video">Video two</section>
+            <section class="video">Video three</section>
+            <section class="video">Video four</section>
+            <section class="video">Video five</section>
+            <section class="video">Video six</section>
+          </div>
+        </div>
+      </tp-yt-app-header-layout>
+    </ytd-app>
+  </body>
+  </html>

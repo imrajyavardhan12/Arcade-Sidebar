@@ -89,6 +89,9 @@ function createElementStub(tagName) {
     setAttribute(name, value) {
       this.attributes[name] = value;
     },
+    getAttribute(name) {
+      return this.attributes[name];
+    },
     appendChild(_child) {},
     getBoundingClientRect() {
       return { width: 0, height: 0 };
@@ -237,6 +240,23 @@ test("layout controller applies YouTube-specific page shifting and clears it on 
   );
   assert.equal(shiftStyle.textContent, "");
   assert.equal(harness.closeCalls.length, 1);
+});
+
+test("layout controller honors explicit layout adapter override", () => {
+  const harness = createHarness("docs.example.com");
+  harness.document.documentElement.setAttribute("data-bts-layout-adapter", "youtube");
+
+  harness.controller.setOpen(true, { persist: false, broadcast: false, animate: false });
+
+  assert.equal(harness.document.documentElement.style.marginLeft, "0px");
+  assert.equal(
+    harness.document.documentElement.style["--bts-page-offset"],
+    "320px"
+  );
+
+  const shiftStyle = harness.document.getElementById("bts-fixed-shift");
+  assert.ok(shiftStyle);
+  assert.match(shiftStyle.textContent, /ytd-app/);
 });
 
 test("layout controller completes animated transitions when transform ends", () => {
