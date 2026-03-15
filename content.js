@@ -23,6 +23,7 @@
   const runtimeClientModule = globalScope.BraveSidebarRuntimeClient;
   const arcModelModule = globalScope.BraveSidebarArcModel;
   const contextMenuActionsModule = globalScope.BraveSidebarContextMenuActions;
+  const layoutControllerModule = globalScope.BraveSidebarLayoutController;
 
   if (
     !searchModule ||
@@ -38,7 +39,8 @@
     !quickSwitcherModule ||
     !runtimeClientModule ||
     !arcModelModule ||
-    !contextMenuActionsModule
+    !contextMenuActionsModule ||
+    !layoutControllerModule
   ) {
     return;
   }
@@ -414,6 +416,39 @@
   setIconLabelButton(newFolderButton, "plus", "New Folder");
   setIconLabelButton(newTabRowButton, "plus", "New Tab");
   setIconOnlyButton(addSpaceButton, "plus");
+
+  function syncLayoutState(nextState) {
+    sidebarWidth = nextState?.sidebarWidth ?? sidebarWidth;
+    sidebarOpen = Boolean(nextState?.sidebarOpen);
+    animationState = String(nextState?.animationState || animationState);
+  }
+
+  const layoutController = layoutControllerModule.createSidebarLayoutController({
+    globalScope,
+    document,
+    sidebarEl,
+    overlayEl,
+    toggleButton,
+    commandPaletteEl,
+    resizeHandle,
+    defaultWidth: DEFAULT_WIDTH,
+    minWidth: MIN_WIDTH,
+    maxWidth: MAX_WIDTH,
+    openTransition: OPEN_TRANSITION,
+    closeTransition: CLOSE_TRANSITION,
+    hostId: host.id,
+    onStateChange: syncLayoutState,
+    onPersistState: () => {
+      void persistWindowState();
+    },
+    onBroadcastOpenState: () => {
+      void broadcastOpenState();
+    },
+    onClose: () => {
+      closeContextMenu();
+      closeCommandPalette({ restoreTabFocus: false });
+    }
+  });
 
   const THEME_STORAGE_KEY = "bts_theme_v1";
   const THEME_MESH_KEYS = ["a", "b", "c", "d", "e"];
@@ -1502,99 +1537,6 @@
     return Number.isInteger(windowId) ? `${WINDOW_STATE_PREFIX}${windowId}` : null;
   }
 
-  function clampWidth(value) {
-    return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(value)));
-  }
-
-  const FIXED_SHIFT_STYLE_ID = "bts-fixed-shift";
-  const PAGE_OFFSET_CSS_VAR = "--bts-page-offset";
-  const YOUTUBE_HOSTNAME_PATTERN = /(^|\.)youtube\.com$/i;
-
-  function ensureFixedShiftStyle() {
-    if (document.getElementById(FIXED_SHIFT_STYLE_ID)) {
-      return document.getElementById(FIXED_SHIFT_STYLE_ID);
-    }
-    const style = document.createElement("style");
-    style.id = FIXED_SHIFT_STYLE_ID;
-    (document.head || document.documentElement).appendChild(style);
-    return style;
-  }
-
-  function isYouTubePage() {
-    return YOUTUBE_HOSTNAME_PATTERN.test(String(globalScope.location?.hostname || ""));
-  }
-
-  function getGenericFixedShiftStyles(width) {
-    return `
-      [style*="position: fixed"]:not(#brave-tab-sidebar-host),
-      [style*="position:fixed"]:not(#brave-tab-sidebar-host) {
-        margin-left: ${width}px !important;
-        max-width: calc(100% - ${width}px) !important;
-      }
-    `;
-  }
-
-  function getYouTubeShiftStyles() {
-    return `
-      ytd-app {
-        margin-left: var(${PAGE_OFFSET_CSS_VAR}) !important;
-        width: calc(100% - var(${PAGE_OFFSET_CSS_VAR})) !important;
-        max-width: calc(100vw - var(${PAGE_OFFSET_CSS_VAR})) !important;
-        box-sizing: border-box !important;
-      }
-
-      #masthead-container,
-      #guide,
-      #mini-guide,
-      ytd-mini-guide-renderer,
-      tp-yt-app-header,
-      #contentContainer.tp-yt-app-header-layout,
-      tp-yt-app-header-layout > #contentContainer {
-        margin-left: var(${PAGE_OFFSET_CSS_VAR}) !important;
-        max-width: calc(100vw - var(${PAGE_OFFSET_CSS_VAR})) !important;
-        box-sizing: border-box !important;
-      }
-
-      ${getGenericFixedShiftStyles(`var(${PAGE_OFFSET_CSS_VAR})`)}
-    `;
-  }
-
-  function pushPageContent(open, width, animate) {
-    const ml = open ? `${width}px` : "0px";
-    if (animate) {
-      document.documentElement.style.transition = "margin-left 250ms cubic-bezier(0.0, 0.0, 0.2, 1.0)";
-    } else {
-      document.documentElement.style.transition = "none";
-    }
-    const youTubePage = isYouTubePage();
-    document.documentElement.style.marginLeft = youTubePage ? "0px" : ml;
-    if (open) {
-      document.documentElement.style.setProperty(PAGE_OFFSET_CSS_VAR, ml);
-    } else {
-      document.documentElement.style.removeProperty(PAGE_OFFSET_CSS_VAR);
-    }
-
-    const style = ensureFixedShiftStyle();
-    if (open) {
-      style.textContent = youTubePage
-        ? getYouTubeShiftStyles()
-        : getGenericFixedShiftStyles(width);
-    } else {
-      style.textContent = "";
-    }
-  }
-
-  function updateToggleButton() {
-    toggleButton.title = sidebarOpen ? "Hide sidebar" : "Show sidebar";
-    toggleButton.setAttribute("aria-label", sidebarOpen ? "Hide sidebar" : "Show sidebar");
-    setIconOnlyButton(toggleButton, "sidebarPanel");
-  }
-
-  function syncOpenClasses() {
-    sidebarEl.classList.toggle("is-open", sidebarOpen);
-    overlayEl.classList.toggle("is-open", sidebarOpen);
-  }
-
   function closeContextMenu() {
     contextMenuTabId = null;
     contextMenuEl.replaceChildren();
@@ -2005,32 +1947,7 @@
   }
 
   function setSidebarWidth(nextWidth, options = {}) {
-    const { persist = true } = options;
-    sidebarWidth = clampWidth(nextWidth);
-    sidebarEl.style.setProperty("--bts-sidebar-width", `${sidebarWidth}px`);
-    sidebarEl.style.width = `${sidebarWidth}px`;
-    commandPaletteEl.style.setProperty("--bts-sidebar-width", `${sidebarWidth}px`);
-    if (sidebarOpen) {
-      pushPageContent(true, sidebarWidth, false);
-    }
-    if (persist) {
-      void persistWindowState();
-    }
-  }
-
-  function freezeMidAnimationTransform() {
-    if (animationState !== "opening" && animationState !== "closing") {
-      return;
-    }
-
-    const currentTransform = getComputedStyle(sidebarEl).transform;
-    if (!currentTransform || currentTransform === "none") {
-      return;
-    }
-
-    sidebarEl.style.transition = "none";
-    sidebarEl.style.transform = currentTransform;
-    sidebarEl.getBoundingClientRect();
+    layoutController.setSidebarWidth(nextWidth, options);
   }
 
   async function broadcastOpenState() {
@@ -2048,61 +1965,7 @@
   }
 
   function setOpen(nextOpen, options = {}) {
-    const { persist = true, broadcast = false, animate = true } = options;
-    const normalized = Boolean(nextOpen);
-
-    if (normalized === sidebarOpen) {
-      return;
-    }
-
-    freezeMidAnimationTransform();
-
-    sidebarOpen = normalized;
-    animationState = sidebarOpen ? "opening" : "closing";
-
-    if (!animate) {
-      sidebarEl.style.transition = "none";
-      syncOpenClasses();
-      sidebarEl.style.transform = sidebarOpen ? "translateX(0)" : "translateX(-100%)";
-      pushPageContent(sidebarOpen, sidebarWidth, false);
-      if (!sidebarOpen) {
-        closeContextMenu();
-        closeCommandPalette({ restoreTabFocus: false });
-      }
-      animationState = sidebarOpen ? "open" : "closed";
-      updateToggleButton();
-      if (persist) {
-        void persistWindowState();
-      }
-      if (broadcast) {
-        void broadcastOpenState();
-      }
-      return;
-    }
-
-    sidebarEl.style.willChange = "transform";
-    sidebarEl.style.transition = sidebarOpen ? OPEN_TRANSITION : CLOSE_TRANSITION;
-    pushPageContent(sidebarOpen, sidebarWidth, true);
-
-    requestAnimationFrame(() => {
-      syncOpenClasses();
-      sidebarEl.style.transform = sidebarOpen ? "translateX(0)" : "translateX(-100%)";
-    });
-
-    if (!sidebarOpen) {
-      closeContextMenu();
-      closeCommandPalette({ restoreTabFocus: false });
-    }
-
-    updateToggleButton();
-
-    if (persist) {
-      void persistWindowState();
-    }
-
-    if (broadcast) {
-      void broadcastOpenState();
-    }
+    layoutController.setOpen(nextOpen, options);
   }
 
   function getVisibleTabs() {
@@ -2386,37 +2249,7 @@
   }
 
   function handleResize() {
-    let dragContext = null;
-
-    function onPointerMove(event) {
-      if (!dragContext) {
-        return;
-      }
-      const delta = event.clientX - dragContext.startX;
-      setSidebarWidth(dragContext.startWidth + delta, { persist: false });
-    }
-
-    function onPointerUp() {
-      if (!dragContext) {
-        return;
-      }
-      dragContext = null;
-      resizeHandle.classList.remove("is-dragging");
-      document.removeEventListener("pointermove", onPointerMove);
-      setSidebarWidth(sidebarWidth, { persist: true });
-    }
-
-    resizeHandle.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      resizeHandle.setPointerCapture(event.pointerId);
-      resizeHandle.classList.add("is-dragging");
-      dragContext = {
-        startX: event.clientX,
-        startWidth: sidebarWidth
-      };
-      document.addEventListener("pointermove", onPointerMove);
-      document.addEventListener("pointerup", onPointerUp, { once: true });
-    });
+    layoutController.bindResizeHandle();
   }
 
   async function hydrateInitialState() {
@@ -2451,11 +2284,7 @@
   }
 
   sidebarEl.addEventListener("transitionend", (event) => {
-    if (event.propertyName !== "transform") {
-      return;
-    }
-    animationState = sidebarOpen ? "open" : "closed";
-    sidebarEl.style.willChange = "auto";
+    layoutController.handleTransitionEnd(event);
   });
 
   toggleButton.addEventListener("click", () => {
@@ -2755,7 +2584,6 @@
 
   handleResize();
   setupArcDropZones();
-  updateToggleButton();
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || typeof message !== "object") {

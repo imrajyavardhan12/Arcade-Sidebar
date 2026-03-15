@@ -24,6 +24,7 @@ jobs:
           node --test tests/keyboard-nav.test.js
           node --test tests/render-perf.test.js
           node --test tests/quick-switcher.test.js
+          node --test tests/layout-controller.test.js
           node --test tests/command-palette-data.test.js
           node --test tests/context-menu-model.test.js
           node --test tests/drag-drop-controller.test.js
@@ -44,4 +45,5 @@ jobs:
           node --check sidebar/context-menu-model.js
           node --check sidebar/command-palette-data.js
           node --check sidebar/quick-switcher.js
+          node --check sidebar/layout-controller.js
           node -e "const fs=require('fs'); JSON.parse(fs.readFileSync('manifest.json','utf8'));"
