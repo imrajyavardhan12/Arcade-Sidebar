@@ -68,5 +68,16 @@
         <section class="card">Spec review</section>
       </div>
     </main>
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const nextTitle = params.get("title");
+      if (nextTitle) {
+        document.title = nextTitle;
+        const heading = document.querySelector("h1");
+        if (heading) {
+          heading.textContent = nextTitle;
+        }
+      }
+    </script>
   </body>
   </html>

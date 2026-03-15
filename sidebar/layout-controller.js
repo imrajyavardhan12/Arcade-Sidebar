@@ -3,6 +3,7 @@
 
   const DEFAULT_FIXED_SHIFT_STYLE_ID = "bts-fixed-shift";
   const DEFAULT_PAGE_OFFSET_CSS_VAR = "--bts-page-offset";
+  const DEFAULT_LAYOUT_ADAPTER_ATTRIBUTE = "data-bts-layout-adapter";
   const YOUTUBE_HOSTNAME_PATTERN = /(^|\.)youtube\.com$/i;
 
   function createSidebarLayoutController(options = {}) {
@@ -30,6 +31,9 @@
     );
     const pageOffsetCssVar = String(
       options.pageOffsetCssVar || DEFAULT_PAGE_OFFSET_CSS_VAR
+    );
+    const layoutAdapterAttribute = String(
+      options.layoutAdapterAttribute || DEFAULT_LAYOUT_ADAPTER_ATTRIBUTE
     );
     const onStateChange =
       typeof options.onStateChange === "function" ? options.onStateChange : null;
@@ -73,7 +77,19 @@
       return style;
     }
 
+    function getLayoutAdapterOverride() {
+      return String(
+        documentRef?.documentElement?.getAttribute?.(layoutAdapterAttribute) || ""
+      )
+        .trim()
+        .toLowerCase();
+    }
+
     function isYouTubePage() {
+      if (getLayoutAdapterOverride() === "youtube") {
+        return true;
+      }
+
       return YOUTUBE_HOSTNAME_PATTERN.test(
         String(globalScopeRef.location?.hostname || "")
       );
