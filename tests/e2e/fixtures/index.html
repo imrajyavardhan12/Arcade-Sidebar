@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Brave Sidebar Fixture</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        background: #f4efe8;
+        color: #2f241d;
+      }
+
+      #fixed-banner {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        padding: 16px 20px;
+        background: rgba(255, 255, 255, 0.92);
+        border-bottom: 1px solid rgba(83, 62, 47, 0.14);
+        backdrop-filter: none;
+      }
+
+      main {
+        max-width: 960px;
+        margin: 96px auto 64px;
+        padding: 0 24px 96px;
+      }
+
+      .stack {
+        display: grid;
+        gap: 16px;
+      }
+
+      .card {
+        min-height: 140px;
+        padding: 20px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(83, 62, 47, 0.12);
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="fixed-banner"
+      style="position: fixed; top: 0; left: 0; right: 0;"
+    >
+      Fixed banner for push-mode assertions
+    </div>
+    <main>
+      <h1>Normal HTTP fixture</h1>
+      <p>Used for extension injection, layout shift, persistence, shortcut, and new-tab tests.</p>
+      <div class="stack">
+        <section class="card">Inbox</section>
+        <section class="card">Roadmap</section>
+        <section class="card">Notes</section>
+        <section class="card">Spec review</section>
+      </div>
+    </main>
+  </body>
+  </html>
