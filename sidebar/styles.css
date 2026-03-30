@@ -162,6 +162,27 @@ input {
   pointer-events: auto;
 }
 
+.bts-overlay.is-hover-mode {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.bts-hover-zone {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.bts-hover-zone.is-enabled {
+  pointer-events: auto;
+}
+
 .bts-command-palette {
   position: fixed;
   inset: 0;
@@ -414,6 +435,12 @@ input {
 .bts-icon-btn:hover {
   background: var(--bts-sidebar-surface);
   border-color: var(--bts-sidebar-border);
+  color: var(--bts-sidebar-text);
+}
+
+.bts-icon-btn.is-active {
+  background: color-mix(in srgb, var(--bts-sidebar-surface-strong) 84%, transparent);
+  border-color: color-mix(in srgb, var(--bts-sidebar-border) 86%, transparent);
   color: var(--bts-sidebar-text);
 }
 

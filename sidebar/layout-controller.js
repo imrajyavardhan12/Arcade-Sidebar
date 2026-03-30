@@ -13,6 +13,7 @@
     const overlayEl = options.overlayEl || null;
     const toggleButton = options.toggleButton || null;
     const commandPaletteEl = options.commandPaletteEl || null;
+    const hoverZoneEl = options.hoverZoneEl || null;
     const resizeHandle = options.resizeHandle || null;
     const defaultWidth = Number.isFinite(options.defaultWidth) ? options.defaultWidth : 320;
     const minWidth = Number.isFinite(options.minWidth) ? options.minWidth : 240;
@@ -44,13 +45,20 @@
         ? options.onBroadcastOpenState
         : null;
     const onClose = typeof options.onClose === "function" ? options.onClose : null;
+    const hoverCloseDelayMs = Number.isFinite(options.hoverCloseDelayMs)
+      ? Math.max(0, Math.round(options.hoverCloseDelayMs))
+      : 260;
 
     const state = {
       sidebarWidth: clampWidth(defaultWidth),
       sidebarOpen: Boolean(options.initialOpen),
-      animationState: options.initialOpen ? "open" : "closed"
+      animationState: options.initialOpen ? "open" : "closed",
+      pinnedOpen:
+        typeof options.initialPinnedOpen === "boolean" ? options.initialPinnedOpen : true
     };
     let resizeBound = false;
+    let hoverBound = false;
+    let hoverCloseTimer = null;
 
     function notifyStateChange() {
       onStateChange?.({ ...state });
@@ -166,6 +174,12 @@
       overlayEl?.classList?.toggle("is-open", state.sidebarOpen);
     }
 
+    function syncModeClasses() {
+      sidebarEl?.classList?.toggle("is-pinned-open", state.pinnedOpen);
+      overlayEl?.classList?.toggle("is-hover-mode", !state.pinnedOpen);
+      hoverZoneEl?.classList?.toggle("is-enabled", !state.pinnedOpen);
+    }
+
     function updateToggleButton() {
       if (!toggleButton) {
         return;
@@ -176,6 +190,47 @@
         "aria-label",
         state.sidebarOpen ? "Hide sidebar" : "Show sidebar"
       );
+    }
+
+    function clearHoverCloseTimer() {
+      if (!hoverCloseTimer) {
+        return;
+      }
+
+      clearTimeout(hoverCloseTimer);
+      hoverCloseTimer = null;
+    }
+
+    function isNodeWithinInteractiveRegion(node) {
+      if (!node || typeof node !== "object") {
+        return false;
+      }
+
+      return Boolean(
+        sidebarEl?.contains?.(node) ||
+          hoverZoneEl?.contains?.(node) ||
+          commandPaletteEl?.contains?.(node)
+      );
+    }
+
+    function scheduleHoverClose() {
+      if (state.pinnedOpen) {
+        return;
+      }
+
+      clearHoverCloseTimer();
+      hoverCloseTimer = setTimeout(() => {
+        hoverCloseTimer = null;
+        if (state.pinnedOpen) {
+          return;
+        }
+
+        setOpen(false, {
+          persist: false,
+          broadcast: false,
+          animate: true
+        });
+      }, hoverCloseDelayMs);
     }
 
     function applyWidthToDOM() {
@@ -294,6 +349,34 @@
       }
     }
 
+    function setPinnedOpen(nextPinnedOpen, options = {}) {
+      const { persist = true, broadcast = false, animate = true } = options;
+      const normalized = Boolean(nextPinnedOpen);
+
+      if (normalized === state.pinnedOpen) {
+        return;
+      }
+
+      state.pinnedOpen = normalized;
+      clearHoverCloseTimer();
+      syncModeClasses();
+      notifyStateChange();
+
+      const previousOpen = state.sidebarOpen;
+      if (normalized) {
+        setOpen(true, { persist, broadcast, animate });
+      } else {
+        setOpen(false, { persist, broadcast, animate });
+      }
+
+      if (persist && previousOpen === state.sidebarOpen) {
+        onPersistState?.();
+      }
+      if (broadcast && previousOpen === state.sidebarOpen) {
+        onBroadcastOpenState?.();
+      }
+    }
+
     function handleTransitionEnd(event) {
       if (event?.propertyName !== "transform") {
         return;
@@ -347,11 +430,82 @@
       });
     }
 
+    function bindHoverInteractions() {
+      if (hoverBound || !hoverZoneEl || !sidebarEl) {
+        return;
+      }
+
+      hoverBound = true;
+
+      hoverZoneEl.addEventListener("mouseenter", () => {
+        if (state.pinnedOpen) {
+          return;
+        }
+
+        clearHoverCloseTimer();
+        setOpen(true, {
+          persist: false,
+          broadcast: false,
+          animate: true
+        });
+      });
+
+      hoverZoneEl.addEventListener("mouseleave", (event) => {
+        if (state.pinnedOpen) {
+          return;
+        }
+
+        if (isNodeWithinInteractiveRegion(event?.relatedTarget)) {
+          return;
+        }
+
+        scheduleHoverClose();
+      });
+
+      sidebarEl.addEventListener("mouseenter", () => {
+        if (!state.pinnedOpen) {
+          clearHoverCloseTimer();
+        }
+      });
+
+      sidebarEl.addEventListener("mouseleave", (event) => {
+        if (state.pinnedOpen) {
+          return;
+        }
+
+        if (isNodeWithinInteractiveRegion(event?.relatedTarget)) {
+          return;
+        }
+
+        scheduleHoverClose();
+      });
+
+      commandPaletteEl?.addEventListener?.("mouseenter", () => {
+        if (!state.pinnedOpen) {
+          clearHoverCloseTimer();
+        }
+      });
+
+      commandPaletteEl?.addEventListener?.("mouseleave", (event) => {
+        if (state.pinnedOpen) {
+          return;
+        }
+
+        if (isNodeWithinInteractiveRegion(event?.relatedTarget)) {
+          return;
+        }
+
+        scheduleHoverClose();
+      });
+    }
+
     applyWidthToDOM();
+    syncModeClasses();
     updateToggleButton();
     notifyStateChange();
 
     return {
+      bindHoverInteractions,
       bindResizeHandle,
       clampWidth,
       getAnimationState() {
@@ -367,8 +521,12 @@
       isOpen() {
         return state.sidebarOpen;
       },
+      isPinnedOpen() {
+        return state.pinnedOpen;
+      },
       isYouTubePage,
       pushPageContent,
+      setPinnedOpen,
       setOpen,
       setSidebarWidth
     };
