@@ -55,6 +55,7 @@
     name: "Personal",
     icon: "•"
   };
+  const DEFAULT_PINNED_OPEN = true;
   const DEFAULT_WIDTH = 320;
   const MIN_WIDTH = 240;
   const MAX_WIDTH = 480;
@@ -82,6 +83,17 @@
     plus: [
       { tag: "path", attrs: { d: "M10 4.5v11" } },
       { tag: "path", attrs: { d: "M4.5 10h11" } }
+    ],
+    pin: [
+      { tag: "path", attrs: { d: "M6.75 6.25h6.5" } },
+      { tag: "path", attrs: { d: "M8 6.25v3.2l-1.8 2.3h7.6L12 9.45v-3.2" } },
+      { tag: "path", attrs: { d: "M10 11.75v4" } }
+    ],
+    pinOff: [
+      { tag: "path", attrs: { d: "M6.75 6.25h6.5" } },
+      { tag: "path", attrs: { d: "M8 6.25v3.2l-1.8 2.3h7.6L12 9.45v-3.2" } },
+      { tag: "path", attrs: { d: "M10 11.75v4" } },
+      { tag: "path", attrs: { d: "M5 5 15 15" } }
     ],
     chevronLeft: [{ tag: "path", attrs: { d: "M12.75 4.75 7.5 10l5.25 5.25" } }],
     chevronRight: [{ tag: "path", attrs: { d: "M7.25 4.75 12.5 10l-5.25 5.25" } }],
@@ -217,6 +229,7 @@
   let sidebarWidth = DEFAULT_WIDTH;
   let sidebarOpen = false;
   let animationState = "closed";
+  let sidebarPinnedOpen = DEFAULT_PINNED_OPEN;
   let searchQuery = "";
   let collapsedGroupIds = new Set();
   let previousVisibleTabIds = new Set();
@@ -307,6 +320,10 @@
   overlayEl.className = "bts-overlay";
   overlayEl.setAttribute("aria-label", "Close sidebar");
 
+  const hoverZoneEl = document.createElement("div");
+  hoverZoneEl.className = "bts-hover-zone";
+  hoverZoneEl.setAttribute("aria-hidden", "true");
+
   const contextMenuEl = document.createElement("div");
   contextMenuEl.className = "bts-context-menu";
   contextMenuEl.setAttribute("role", "menu");
@@ -332,6 +349,7 @@
   sidebarEl.innerHTML = `
     <div class="bts-toolbar">
       <button id="bts-toggle-btn" class="bts-icon-btn bts-toolbar-panel-btn" type="button" aria-label="Hide sidebar">Toggle</button>
+      <button id="bts-pin-toggle-btn" class="bts-icon-btn bts-toolbar-pin-btn" type="button" aria-label="Disable keep-open mode" title="Keep sidebar open">Pin</button>
       <button id="bts-theme-btn" class="bts-icon-btn" type="button" aria-label="Theme" title="Customize theme">Theme</button>
       <button id="bts-search-toggle-btn" class="bts-icon-btn bts-toolbar-search-btn" type="button" aria-label="Search tabs" title="Search tabs">Search</button>
       <button id="bts-new-tab-btn" class="bts-icon-btn" type="button" aria-label="New tab" title="New tab">New</button>
@@ -375,10 +393,19 @@
     </div>
   `;
 
-  shadowRoot.append(fallbackStyleEl, linkEl, overlayEl, sidebarEl, contextMenuEl, commandPaletteEl);
+  shadowRoot.append(
+    fallbackStyleEl,
+    linkEl,
+    overlayEl,
+    hoverZoneEl,
+    sidebarEl,
+    contextMenuEl,
+    commandPaletteEl
+  );
   document.documentElement.append(host);
 
   const toggleButton = sidebarEl.querySelector("#bts-toggle-btn");
+  const pinToggleButton = sidebarEl.querySelector("#bts-pin-toggle-btn");
   const themeButton = sidebarEl.querySelector("#bts-theme-btn");
   const searchToggleButton = sidebarEl.querySelector("#bts-search-toggle-btn");
   const newTabButton = sidebarEl.querySelector("#bts-new-tab-btn");
@@ -404,6 +431,7 @@
   const commandList = commandPaletteEl.querySelector("#bts-command-list");
 
   setIconOnlyButton(toggleButton, "sidebarPanel");
+  setIconOnlyButton(pinToggleButton, "pin");
   setIconOnlyButton(themeButton, "palette");
   setIconOnlyButton(searchToggleButton, "search");
   setIconOnlyButton(newTabButton, "plus");
@@ -412,10 +440,29 @@
   setIconLabelButton(newTabRowButton, "plus", "New Tab");
   setIconOnlyButton(addSpaceButton, "plus");
 
+  function updatePinnedModeButton() {
+    if (!pinToggleButton) {
+      return;
+    }
+
+    pinToggleButton.classList.toggle("is-active", sidebarPinnedOpen);
+    pinToggleButton.title = sidebarPinnedOpen
+      ? "Keep sidebar open (enabled)"
+      : "Hover to reveal sidebar";
+    pinToggleButton.setAttribute(
+      "aria-label",
+      sidebarPinnedOpen ? "Disable keep-open mode" : "Enable keep-open mode"
+    );
+    pinToggleButton.replaceChildren(createIcon(sidebarPinnedOpen ? "pin" : "pinOff"));
+  }
+
   function syncLayoutState(nextState) {
     sidebarWidth = nextState?.sidebarWidth ?? sidebarWidth;
     sidebarOpen = Boolean(nextState?.sidebarOpen);
     animationState = String(nextState?.animationState || animationState);
+    sidebarPinnedOpen =
+      typeof nextState?.pinnedOpen === "boolean" ? nextState.pinnedOpen : sidebarPinnedOpen;
+    updatePinnedModeButton();
   }
 
   let interactionController = null;
@@ -426,12 +473,14 @@
     overlayEl,
     toggleButton,
     commandPaletteEl,
+    hoverZoneEl,
     resizeHandle,
     defaultWidth: DEFAULT_WIDTH,
     minWidth: MIN_WIDTH,
     maxWidth: MAX_WIDTH,
     openTransition: OPEN_TRANSITION,
     closeTransition: CLOSE_TRANSITION,
+    initialPinnedOpen: DEFAULT_PINNED_OPEN,
     hostId: host.id,
     onStateChange: syncLayoutState,
     onPersistState: () => {
@@ -1540,12 +1589,17 @@
     await storageSet(key, {
       open: sidebarOpen,
       width: sidebarWidth,
-      collapsedGroupIds: Array.from(collapsedGroupIds)
+      collapsedGroupIds: Array.from(collapsedGroupIds),
+      pinnedOpen: sidebarPinnedOpen
     });
   }
 
   function setSidebarWidth(nextWidth, options = {}) {
     layoutController.setSidebarWidth(nextWidth, options);
+  }
+
+  function setPinnedOpen(nextPinnedOpen, options = {}) {
+    layoutController.setPinnedOpen(nextPinnedOpen, options);
   }
 
   async function broadcastOpenState() {
@@ -1808,8 +1862,9 @@
     }
   }
 
-  function handleResize() {
+  function bindLayoutInteractions() {
     layoutController.bindResizeHandle();
+    layoutController.bindHoverInteractions();
   }
 
   async function hydrateInitialState() {
@@ -1838,7 +1893,18 @@
       : [];
 
     collapsedGroupIds = new Set(persistedGroupIds);
-    const initialOpen = state && typeof state.open === "boolean" ? state.open : true;
+    const persistedPinnedOpen =
+      state && typeof state.pinnedOpen === "boolean" ? state.pinnedOpen : DEFAULT_PINNED_OPEN;
+    setPinnedOpen(persistedPinnedOpen, {
+      persist: false,
+      broadcast: false,
+      animate: false
+    });
+    const initialOpen = persistedPinnedOpen
+      ? state && typeof state.open === "boolean"
+        ? state.open
+        : true
+      : false;
     setOpen(initialOpen, { persist: true, broadcast: true, animate: false });
     renderTabList();
   }
@@ -1849,6 +1915,14 @@
 
   toggleButton.addEventListener("click", () => {
     setOpen(!sidebarOpen, { persist: true, broadcast: true, animate: true });
+  });
+
+  pinToggleButton.addEventListener("click", () => {
+    setPinnedOpen(!sidebarPinnedOpen, {
+      persist: true,
+      broadcast: true,
+      animate: true
+    });
   });
 
   overlayEl.addEventListener("click", () => {
@@ -1898,7 +1972,7 @@
     renderTabList();
   }
 
-  handleResize();
+  bindLayoutInteractions();
   setupArcDropZones();
   interactionController.bind();
 

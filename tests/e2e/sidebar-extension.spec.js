@@ -21,8 +21,15 @@ async function expectPageOffset(page, expectedMarginLeft) {
 }
 
 async function expectSidebarOpenState(page, isOpen) {
-  const expected = isOpen ? /is-open/ : /^bts-sidebar$/;
-  await expect(page.locator("#brave-tab-sidebar-host .bts-sidebar")).toHaveClass(expected);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const host = document.querySelector("#brave-tab-sidebar-host");
+        const sidebar = host?.shadowRoot?.querySelector(".bts-sidebar");
+        return Boolean(sidebar?.classList?.contains("is-open"));
+      })
+    )
+    .toBe(isOpen);
 }
 
 async function dispatchDragAndDrop(page, sourceSelector, targetSelector) {
@@ -167,6 +174,27 @@ test("opens the command palette from keyboard shortcut and tab message route", a
   }, TOGGLE_COMMAND_PALETTE);
 
   await expect(page.locator("#brave-tab-sidebar-host .bts-command-palette")).toHaveClass(/is-open/);
+});
+
+test("supports keep-open toggle and hover-reveal mode", async ({ page }) => {
+  await page.goto("/index.html");
+  await waitForSidebarInjected(page);
+
+  await page.locator("#brave-tab-sidebar-host #bts-pin-toggle-btn").click();
+  await expectSidebarOpenState(page, false);
+
+  await page.mouse.move(2, 180);
+  await expectSidebarOpenState(page, true);
+
+  await page.mouse.move(900, 180);
+  await expectSidebarOpenState(page, false);
+
+  await page.mouse.move(2, 180);
+  await expectSidebarOpenState(page, true);
+  await page.locator("#brave-tab-sidebar-host #bts-pin-toggle-btn").click();
+
+  await page.mouse.move(900, 180);
+  await expectSidebarOpenState(page, true);
 });
 
 test("injects into extension-created http tabs", async ({ context, page, serviceWorker }) => {

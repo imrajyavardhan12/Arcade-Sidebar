@@ -129,10 +129,14 @@ function createDocumentStub() {
   };
 }
 
-function createHarness(hostname = "example.com") {
+function createHarness(input = "example.com") {
+  const options =
+    typeof input === "string" ? { hostname: input } : { ...(input || {}) };
+  const hostname = options.hostname || "example.com";
   const document = createDocumentStub();
   const sidebarEl = createElementStub("aside");
   const overlayEl = createElementStub("button");
+  const hoverZoneEl = createElementStub("div");
   const toggleButton = createElementStub("button");
   const commandPaletteEl = createElementStub("div");
   const resizeHandle = createElementStub("div");
@@ -162,12 +166,16 @@ function createHarness(hostname = "example.com") {
     document,
     sidebarEl,
     overlayEl,
+    hoverZoneEl,
     toggleButton,
     commandPaletteEl,
     resizeHandle,
     defaultWidth: 320,
     minWidth: 240,
     maxWidth: 480,
+    hoverCloseDelayMs: Number.isFinite(options.hoverCloseDelayMs)
+      ? options.hoverCloseDelayMs
+      : 260,
     onPersistState() {
       persistCalls.push(controller.getState());
     },
@@ -188,6 +196,7 @@ function createHarness(hostname = "example.com") {
     commandPaletteEl,
     controller,
     document,
+    hoverZoneEl,
     overlayEl,
     persistCalls,
     resizeHandle,
@@ -292,4 +301,60 @@ test("layout controller binds resize interactions and persists on pointer up", (
   harness.document.dispatchEvent("pointerup", {});
   assert.equal(harness.persistCalls.length, 1);
   assert.equal(harness.resizeHandle.classList.contains("is-dragging"), false);
+});
+
+test("layout controller toggles pinned-open mode and updates hover classes", () => {
+  const harness = createHarness("example.com");
+
+  assert.equal(harness.controller.isPinnedOpen(), true);
+  assert.equal(harness.sidebarEl.classList.contains("is-pinned-open"), true);
+  assert.equal(harness.overlayEl.classList.contains("is-hover-mode"), false);
+  assert.equal(harness.hoverZoneEl.classList.contains("is-enabled"), false);
+
+  harness.controller.setPinnedOpen(false, {
+    persist: true,
+    broadcast: true,
+    animate: false
+  });
+
+  assert.equal(harness.controller.isPinnedOpen(), false);
+  assert.equal(harness.sidebarEl.classList.contains("is-pinned-open"), false);
+  assert.equal(harness.overlayEl.classList.contains("is-hover-mode"), true);
+  assert.equal(harness.hoverZoneEl.classList.contains("is-enabled"), true);
+  assert.equal(harness.controller.isOpen(), false);
+  assert.equal(harness.persistCalls.length > 0, true);
+  assert.equal(harness.broadcastCalls.length > 0, true);
+
+  harness.controller.setPinnedOpen(true, {
+    persist: true,
+    broadcast: false,
+    animate: false
+  });
+
+  assert.equal(harness.controller.isPinnedOpen(), true);
+  assert.equal(harness.controller.isOpen(), true);
+  assert.equal(harness.overlayEl.classList.contains("is-hover-mode"), false);
+  assert.equal(harness.hoverZoneEl.classList.contains("is-enabled"), false);
+});
+
+test("layout controller hover mode opens from edge hover and auto-closes on mouse leave", async () => {
+  const harness = createHarness({
+    hostname: "example.com",
+    hoverCloseDelayMs: 5
+  });
+
+  harness.controller.setPinnedOpen(false, {
+    persist: false,
+    broadcast: false,
+    animate: false
+  });
+  harness.controller.bindHoverInteractions();
+
+  harness.hoverZoneEl.dispatchEvent("mouseenter");
+  assert.equal(harness.controller.isOpen(), true);
+
+  harness.sidebarEl.dispatchEvent("mouseleave", { relatedTarget: null });
+  await new Promise((resolve) => setTimeout(resolve, 15));
+
+  assert.equal(harness.controller.isOpen(), false);
 });
