@@ -158,13 +158,13 @@ input {
 }
 
 .bts-overlay.is-open {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.bts-overlay.is-hover-mode {
   opacity: 0;
   pointer-events: none;
+}
+
+.bts-overlay.is-open.is-hover-mode {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .bts-hover-zone {
