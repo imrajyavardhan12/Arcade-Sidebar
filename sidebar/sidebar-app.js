@@ -1593,8 +1593,8 @@
       layoutController.setPinnedOpen(persistedPinnedOpen, { persist: false, broadcast: false, animate: false });
 
       const initialOpen = persistedPinnedOpen
-        ? state && typeof state.open === "boolean" ? state.open : true
-        : false;
+        ? true
+        : state && typeof state.open === "boolean" ? state.open : false;
 
       layoutController.setOpen(initialOpen, { persist: true, broadcast: true, animate: false });
       renderTabList();
