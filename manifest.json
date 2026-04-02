@@ -59,6 +59,11 @@
         "sidebar/context-menu-actions.js",
         "sidebar/layout-controller.js",
         "sidebar/interaction-controller.js",
+        "sidebar/adapters/chrome-messaging-adapter.js",
+        "sidebar/adapters/chrome-storage-adapter.js",
+        "sidebar/adapters/shadow-dom-adapter.js",
+        "sidebar/adapters/animation-frame-adapter.js",
+        "sidebar/sidebar-app.js",
         "content.js"
       ],
       "run_at": "document_idle"
