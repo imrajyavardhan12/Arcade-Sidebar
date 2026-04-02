@@ -285,6 +285,14 @@
       display: flex;
       flex-direction: column;
     }
+    .bts-overlay.is-open {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .bts-overlay.is-open.is-hover-mode {
+      opacity: 1;
+      pointer-events: auto;
+    }
     .bts-context-menu {
       position: fixed;
       display: none;
@@ -1926,6 +1934,9 @@
   });
 
   overlayEl.addEventListener("click", () => {
+    if (sidebarPinnedOpen) {
+      return;
+    }
     setOpen(false, { persist: true, broadcast: true, animate: true });
   });
 

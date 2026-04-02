@@ -197,6 +197,33 @@ test("supports keep-open toggle and hover-reveal mode", async ({ page }) => {
   await expectSidebarOpenState(page, true);
 });
 
+test("keeps pinned sidebar open on page click and after unsupported-page navigation", async ({
+  page
+}) => {
+  await page.goto("/index.html");
+  await waitForSidebarInjected(page);
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const host = document.querySelector("#brave-tab-sidebar-host");
+        const pinButton = host?.shadowRoot?.querySelector("#bts-pin-toggle-btn");
+        return Boolean(pinButton?.classList?.contains("is-active"));
+      })
+    )
+    .toBe(true);
+
+  await page.mouse.click(1000, 180);
+  await expectSidebarOpenState(page, true);
+
+  await page.goto("about:blank");
+  await expect(page.locator("#brave-tab-sidebar-host")).toHaveCount(0);
+
+  await page.goto("/index.html?from=unsupported");
+  await waitForSidebarInjected(page);
+  await expectSidebarOpenState(page, true);
+});
+
 test("injects into extension-created http tabs", async ({ context, page, serviceWorker }) => {
   await page.goto("/index.html");
   await waitForSidebarInjected(page);
